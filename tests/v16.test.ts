@@ -1,0 +1,5 @@
+import { expect,it } from 'vitest';
+import { makeFixture } from './fixture';
+import { serializeMemo } from '../src/core/markdown';
+it('excludes current and historical conversation folders from indexing and reformatting',async()=>{const {plugin,files}=await makeFixture({chatFolder:'小记/我的AI',chatFolders:['小记/旧对话']});files.data.set('小记/我的AI/chat.md',serializeMemo('20261023100000000','不是小记'));files.data.set('小记/旧对话/chat.md',serializeMemo('20261023100000001','旧对话'));await plugin.repo.scan();expect(plugin.repo.records).toHaveLength(4);const plan=await plugin.repo.planReformat();expect([...plan.files,...plan.skipped].some(f=>f.path.includes('AI/')||f.path.includes('旧对话/'))).toBe(false);});
+it('keeps flat backups unique on repeated formatting',async()=>{const {plugin,files}=await makeFixture();const plan=await plugin.repo.planReformat();const result=await plugin.repo.applyReformat(plan);const paths=[...files.data.keys()].filter(p=>p.startsWith(result.backupFolder+'/'));expect(paths.length).toBeGreaterThan(0);expect(paths.every(p=>!p.slice(result.backupFolder.length+1).includes('/')&&p.endsWith('.md'))).toBe(true);});
