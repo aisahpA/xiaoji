@@ -1,7 +1,7 @@
 import { Component, ItemView, MarkdownRenderer, Menu, Notice, Platform, setIcon, type ViewStateResult, type WorkspaceLeaf } from 'obsidian';
 import type XiaojiPlugin from '../main';
 import { densityValues } from '../core/settings';
-import { selectMemos } from '../core/search';
+import { compileSearch, selectMemos } from '../core/search';
 import { MemoError, type Memo, type NavItem, type TrashEntry } from '../core/types';
 import { bindErrors, button, element, empty, interactiveTarget } from './dom';
 import { MemoEditor } from './editor';
@@ -11,6 +11,7 @@ import { compactQuickWindow } from './quick-chrome';
 import { type TagNode } from '../core/tags';
 import { AskPanel, type AskState } from './ask';
 import { TrashPanel } from './trash';
+import { highlightSearch } from './search-highlight';
 import { SearchPanel } from './search-panel';
 import { TextModal } from './modals';
 
@@ -62,6 +63,8 @@ export class MemoView extends ItemView {
   private feed!: HTMLElement;
   private sentinel!: HTMLElement;
   private cards = new Map<string, Card>();
+  private slots = new Map<string, { el: HTMLElement; memo: Memo }>();
+  private visibility: IntersectionObserver | null = null;
   private observer: ResizeObserver | null = null;
   private cardObserver: ResizeObserver | null = null;
   private intersection: IntersectionObserver | null = null;
@@ -79,10 +82,19 @@ export class MemoView extends ItemView {
   private suppressCardClick = 0;
   private expanded = new Set<string>();
   private filtered: Memo[] = [];
+  private queryCache?: { records: Memo[]; key: string; result: Memo[] };
+  private geometryFrame: number | null = null;
+  private highlightQueries = new WeakMap<HTMLElement, string>();
+
+
+
   private width = 1000;
   private manualSidebar = false;
   private searchActive = false;
   private chromeSignature = '';
+  private chromeRecords?: Memo[];
+  private recordsRevision = 0;
+  private tagTreeCache?: { records: Memo[]; order: readonly string[]; nodes: TagNode[] };
   private closed = false;
   private saving = false;
   private composerLocale = '';
@@ -157,19 +169,47 @@ export class MemoView extends ItemView {
     this.sentinel = element(this.scroller, 'div', 'xj-sentinel');
     this.buildComposer();
     this.bindMarquee();
+    this.visibility = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const key = (entry.target as HTMLElement).dataset.memoKey;
+        const slot = key ? this.slots.get(key) : undefined;
+        if (!key || !slot || slot.el !== entry.target || this.closed) continue;
+        if (entry.isIntersecting) {
+          if (!this.cards.has(key)) {
+            const card = this.createCard(slot.memo); this.cards.set(key, card);
+            slot.el.setCssProps({ '--xj-slot-height': 'auto' }); slot.el.appendChild(card.el); this.cardObserver?.observe(card.el);
+            this.syncCard(card);
+          }
+        } else {
+          const card = this.cards.get(key);
+          const selection = this.root.ownerDocument.defaultView?.getSelection();
+          if (!card || card.el.contains(this.root.ownerDocument.activeElement) ||
+            selection && !selection.isCollapsed && (card.el.contains(selection.anchorNode) || card.el.contains(selection.focusNode))) continue;
+          const height = card.el.getBoundingClientRect().height;
+          if (height <= 0) continue;
+          slot.el.style.setProperty('--xj-slot-height', height + 'px'); this.disposeCard(card); this.cards.delete(key);
+        }
+      }
+    }, { root: this.scroller, rootMargin: '1000px' });
     this.cardObserver = new ResizeObserver(entries => {
       if (this.plugin.prefs.layout !== 'waterfall') return;
       const gap = densityValues(this.plugin.prefs).gap;
       for (const entry of entries) {
         const node = entry.target as HTMLElement;
-        const span = Math.max(1, Math.ceil((node.getBoundingClientRect().height + gap) / 4));
-        if (node.style.gridRowEnd !== 'span ' + span) node.style.gridRowEnd = 'span ' + span;
+        const span = Math.max(1, Math.ceil(((entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height) + gap) / 4));
+        const host = node.parentElement;
+        if (host && host.style.gridRowEnd !== 'span ' + span) host.style.gridRowEnd = 'span ' + span;
       }
     });
     this.observer = new ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width;
       if (!width || Math.abs(width - this.width) < 2) return;
-      this.width = width; this.render(true);
+      const breakpointChanged = (this.width < 900) !== (width < 900);
+      this.width = width;
+      if (breakpointChanged) this.renderChrome();
+      if (this.geometryFrame === null) this.geometryFrame = this.root.ownerDocument.defaultView!.requestAnimationFrame(() => {
+        this.geometryFrame = null; this.measureCards();
+      });
     });
     this.observer.observe(this.root);
     this.intersection = new IntersectionObserver(entries => {
@@ -355,7 +395,8 @@ export class MemoView extends ItemView {
       this.askPanel.unload(); this.askPanel = null;
       if (this.currentId === 'ask') this.currentId = 'all';
     }
-    const signature = JSON.stringify([this.plugin.prefs, this.plugin.locale, this.plugin.repo.records.map(memo => memo.key + memo.tags.join(',') + memo.archived).join('|'), this.currentId, this.tagPath, this.selectionMode, this.selected.size, this.width, this.manualSidebar, this.searchActive]);
+    if (this.chromeRecords !== this.plugin.repo.records) { this.chromeRecords = this.plugin.repo.records; this.recordsRevision++; }
+    const signature = JSON.stringify([this.plugin.prefs, this.plugin.locale, this.recordsRevision, this.currentId, this.tagPath, this.selectionMode, this.selected.size, this.width, this.manualSidebar, this.searchActive]);
     if (force || signature !== this.chromeSignature) {
       this.chromeSignature = signature; this.renderChrome();
     }
@@ -393,7 +434,7 @@ export class MemoView extends ItemView {
     this.sidebarEl.hidden = !open;
     if (this.selectionMode) { this.renderSelectionToolbar(); this.renderSidebar(open); return; }
     button(this.toolbar, p.t('navigation'), () => {
-      this.manualSidebar = !this.sidebarOpen(); this.saveLayout(); this.render(true);
+      this.manualSidebar = !this.sidebarOpen(); this.saveLayout(); this.renderChrome();
     }, 'panel-left');
     if (this.referenceReturn) button(this.toolbar, p.t('backToPrevious'), async () => {
       const state = this.referenceReturn!; this.referenceReturn = null;
@@ -455,7 +496,10 @@ export class MemoView extends ItemView {
     element(this.sidebarEl, 'hr', 'xj-sidebar-divider');
     element(this.sidebarEl, 'small', 'xj-tags-heading', p.t('tags'));
     const tags = element(this.sidebarEl, 'div', 'xj-tag-tree');
-    this.drawTags(tags, orderedTags(p.repo.records, p.prefs.tagOrder));
+    if (!this.tagTreeCache || this.tagTreeCache.records !== p.repo.records || this.tagTreeCache.order !== p.prefs.tagOrder) {
+      this.tagTreeCache = { records: p.repo.records, order: p.prefs.tagOrder, nodes: orderedTags(p.repo.records, p.prefs.tagOrder) };
+    }
+    this.drawTags(tags, this.tagTreeCache.nodes);
   }
   private drawTags(parent: HTMLElement, nodes: TagNode[], depth = 0): void {
     for (const tag of nodes) {
@@ -561,6 +605,48 @@ export class MemoView extends ItemView {
     this.searchPanel.input.focus();
   }
 
+  private decorateCard(card: Card): void {
+    if (this.highlightQueries.get(card.body) === this.query) return;
+    highlightSearch(card.body, this.query); this.highlightQueries.set(card.body, this.query);
+    card.el.querySelector('.xj-search-context')?.remove();
+    const terms: string[] = [];
+    try { compileSearch(this.query, terms); } catch { return; }
+    if (!terms.length) return;
+    const hit = card.body.querySelector<HTMLElement>('mark.xj-search-hit');
+    const hidden = !hit || hit.offsetTop - card.body.offsetTop >= densityValues(this.plugin.prefs).foldHeight;
+    if (hidden && !this.expanded.has(card.memo.key)) {
+      const normalized = card.memo.body.normalize('NFKC').toLocaleLowerCase();
+      const normalizedIndex = terms.map(term => normalized.indexOf(term.normalize('NFKC').toLocaleLowerCase())).find(value => value >= 0);
+      if (normalizedIndex !== undefined) {
+        let index = 0, foldedOffset = 0;
+        for (const part of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(card.memo.body)) {
+          foldedOffset += part.segment.normalize('NFKC').toLocaleLowerCase().length;
+          if (foldedOffset > normalizedIndex) { index = part.index; break; }
+        }
+        const context = element(card.el, 'div', 'xj-search-context');
+        const excerpt = element(context, 'span', '', (index > 45 ? '…' : '') + card.memo.body.slice(Math.max(0, index - 45), index + 100) + (index + 100 < card.memo.body.length ? '…' : ''));
+        highlightSearch(excerpt, this.query);
+        button(context, this.plugin.locale === 'zh' ? '展开小记' : 'Expand memo', () => {
+          this.expanded.add(card.memo.key); card.body.classList.remove('is-folded'); context.hidden = true; this.syncCard(card);
+          if (hit) hit.scrollIntoView({ block: 'nearest' });
+        }, undefined, 'xj-text-button');
+      }
+    }
+  }
+
+  private syncCard(card: Card): void {
+    card.checkbox.hidden = !this.selectionMode; card.checkbox.checked = this.selected.has(card.memo.key);
+    card.el.classList.toggle('is-selected', this.selected.has(card.memo.key));
+    card.body.classList.toggle('is-folded', !this.expanded.has(card.memo.key));
+    card.fold.textContent = this.plugin.t(this.expanded.has(card.memo.key) ? 'collapse' : 'expand');
+  }
+
+  private measureCards(): void {
+    const height = densityValues(this.plugin.prefs).foldHeight;
+    const measurements = [...this.cards.values()].map(card => ({ card, folded: card.body.scrollHeight > height + 6 }));
+    for (const { card, folded } of measurements) { card.body.classList.toggle('can-fold', folded); card.fold.hidden = !folded; }
+  }
+
   private renderFeed(): void {
     if (!this.feed || this.closed) return;
     const p = this.plugin;
@@ -572,7 +658,13 @@ export class MemoView extends ItemView {
       element(this.status, 'p', 'xj-hint', p.t('readFailed'));
       button(this.status, p.t('refresh'), () => this.run(() => p.refresh()), undefined, 'xj-text-button');
     }
-    try { this.filtered = selectMemos(p.repo.records, this.current(), this.query, p.prefs, { all: this.allScope, includeArchived: this.includeArchived, tags: this.filterTags }); }
+    try {
+      const key = JSON.stringify([this.stateKey(), this.current(), p.prefs.tasksIncludeCompleted, new Date().toDateString()]);
+      if (!this.queryCache || this.queryCache.records !== p.repo.records || this.queryCache.key !== key) {
+        this.queryCache = { records: p.repo.records, key, result: selectMemos(p.repo.records, this.current(), this.query, p.prefs, { all: this.allScope, includeArchived: this.includeArchived, tags: this.filterTags }) };
+      }
+      this.filtered = [...this.queryCache.result];
+    }
     catch (error) {
       this.filtered = [];
       element(this.status, 'p', 'xj-hint', p.t(error instanceof MemoError && error.code === 'unsupportedQuery' ? 'unsupportedQuery' : 'invalidQuery'));
@@ -580,34 +672,54 @@ export class MemoView extends ItemView {
     for (const feedback of this.completedFeedback.values()) {
       if (feedback.scope === this.stateKey() && !this.filtered.some(memo => memo.key === feedback.memo.key)) this.filtered.push(feedback.memo);
     }
-    this.filtered.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt || a.key.localeCompare(b.key));
+    if (this.completedFeedback.size) this.filtered.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt || a.key.localeCompare(b.key));
     if (p.repo.duplicates.size) element(this.status, 'p', 'xj-hint', p.t('duplicateWarning', { count: p.repo.duplicates.size }));
     const visible = this.filtered.slice(0, this.limit);
     const keep = new Set(visible.map(memo => memo.key));
     for (const [key, card] of this.cards) if (!keep.has(key)) { this.disposeCard(card); this.cards.delete(key); }
-    let pinIndex = 0, regularIndex = 0;
+    for (const [key, slot] of this.slots) if (!keep.has(key)) {
+      this.visibility?.unobserve(slot.el); slot.el.remove(); this.slots.delete(key);
+    }
+    let pinCursor = this.pinnedFeed.firstElementChild, regularCursor = this.regularFeed.firstElementChild;
     this.pinnedFeed.hidden = !visible.some(memo => memo.pinned);
     for (const memo of visible) {
       let card = this.cards.get(memo.key);
       if (card && card.memo.raw !== memo.raw) { this.disposeCard(card); this.cards.delete(memo.key); card = undefined; }
-      if (!card) { card = this.createCard(memo); this.cards.set(memo.key, card); }
+      let slot = this.slots.get(memo.key);
+      if (!slot) {
+        const el = this.root.ownerDocument.win.createFragment().createDiv(); el.className = 'xj-card-slot';
+        el.dataset.memoKey = memo.key; slot = { el, memo }; this.slots.set(memo.key, slot);
+        if (!this.scroller.clientHeight) {
+          card = this.createCard(memo); this.cards.set(memo.key, card); el.appendChild(card.el);
+        } else {
+          const height = densityValues(p.prefs).foldHeight + 80;
+          el.style.setProperty('--xj-slot-height', height + 'px'); el.style.gridRowEnd = 'span ' + Math.ceil((height + densityValues(p.prefs).gap) / 4);
+        }
+        this.visibility?.observe(el);
+      } else if (slot.memo.raw !== memo.raw) {
+        slot.memo = memo; slot.el.setCssProps({ '--xj-slot-height': 'auto' });
+        card = this.createCard(memo); this.cards.set(memo.key, card); slot.el.appendChild(card.el);
+      }
+      const zone = memo.pinned ? this.pinnedFeed : this.regularFeed;
+      const cursor = memo.pinned ? pinCursor : regularCursor;
+      if (cursor !== slot.el) zone.insertBefore(slot.el, cursor);
+      else if (memo.pinned) pinCursor = cursor.nextElementSibling;
+      else regularCursor = cursor.nextElementSibling;
+      if (!card) continue;
       card.checkbox.hidden = !this.selectionMode;
       card.checkbox.checked = this.selected.has(memo.key);
       card.el.classList.toggle('is-selected', this.selected.has(memo.key));
       card.body.classList.toggle('is-folded', !this.expanded.has(memo.key));
-      const canFold = card.body.scrollHeight > densityValues(p.prefs).foldHeight + 6;
-      card.body.classList.toggle('can-fold', canFold); card.fold.hidden = !canFold;
+      this.decorateCard(card);
       card.fold.textContent = p.t(this.expanded.has(memo.key) ? 'collapse' : 'expand');
       const time = card.el.querySelector('time');
       if (time) time.textContent = p.date(memo);
       card.checkbox.setAttribute('aria-label', p.t('select') + ' ' + p.date(memo));
       const more = card.el.querySelector<HTMLButtonElement>('.xj-card-heading .xj-icon-button');
       if (more) { more.title = p.t('more'); more.setAttribute('aria-label', p.t('more')); }
-      const zone = memo.pinned ? this.pinnedFeed : this.regularFeed;
-      const index = memo.pinned ? pinIndex++ : regularIndex++;
-      if (zone.children[index] !== card.el) zone.insertBefore(card.el, zone.children[index] ?? null);
       this.cardObserver?.observe(card.el);
     }
+    this.measureCards();
     if (!visible.length) element(this.status, 'div', 'xj-empty', p.loading ? p.t('loading') : this.query ? p.t('noResults') : p.repo.records.length ? p.t('noResults') : p.t('empty'));
     this.sentinel.hidden = this.limit >= this.filtered.length;
     empty(this.sentinel);
@@ -714,6 +826,7 @@ export class MemoView extends ItemView {
         fold.hidden = body.scrollHeight <= height + 6;
         body.classList.toggle('can-fold', !fold.hidden);
       };
+      this.highlightQueries.delete(body); this.decorateCard(card);
       checkFold();
       for (const image of body.querySelectorAll('img')) image.addEventListener('load', checkFold, { once: true });
     }).catch(error => { if (card.alive) { body.textContent = memo.body; p.report(error); } });
@@ -791,7 +904,12 @@ export class MemoView extends ItemView {
     const all = selectMemos(this.plugin.repo.records, this.current(), '', this.plugin.prefs);
     this.limit = Math.max(40, all.findIndex(item => item.key === memo.key) + 1);
     this.expanded.add(memo.key); this.render(true);
-    const card = this.cards.get(memo.key);
+    let card = this.cards.get(memo.key);
+    const slot = this.slots.get(memo.key);
+    if (!card && slot) {
+      card = this.createCard(memo); this.cards.set(memo.key, card); slot.el.setCssProps({ '--xj-slot-height': 'auto' });
+      slot.el.appendChild(card.el); this.cardObserver?.observe(card.el); this.syncCard(card);
+    }
     if (card) { card.el.scrollIntoView({ block: 'center' });
       window.clearTimeout(this.revealTimer); this.revealed?.classList.remove('is-revealed');
       this.revealed = card.el; void card.el.offsetWidth; card.el.classList.add('is-revealed');
@@ -803,14 +921,15 @@ export class MemoView extends ItemView {
     this.marqueeCleanup?.(); this.marqueeCleanup = null;
     this.searchPanel?.destroy();
     if (this.feedFrame !== null) this.root.ownerDocument.defaultView?.cancelAnimationFrame(this.feedFrame); this.feedFrame = null;
+    if (this.geometryFrame !== null) this.root.ownerDocument.defaultView?.cancelAnimationFrame(this.geometryFrame);
     window.clearTimeout(this.revealTimer);
     this.closed = true; this.sorter?.destroy(); this.sorter = null; this.askPanel?.unload(); this.trashPanel?.unload();
-    this.unsubscribe?.(); this.observer?.disconnect(); this.cardObserver?.disconnect(); this.intersection?.disconnect();
+    this.unsubscribe?.(); this.observer?.disconnect(); this.cardObserver?.disconnect(); this.intersection?.disconnect(); this.visibility?.disconnect();
     for (const feedback of this.completedFeedback.values()) window.clearTimeout(feedback.timer);
     this.completedFeedback.clear();
     this.composer?.unload(); this.composer = null;
     for (const card of this.cards.values()) this.disposeCard(card);
-    this.cards.clear(); empty(this.contentEl);
+    this.cards.clear(); this.slots.clear(); empty(this.contentEl);
   }
 }
 

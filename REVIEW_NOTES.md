@@ -39,3 +39,15 @@ authorized GitHub permissions and repository support.
 
 Automated checks are distinct from real Obsidian desktop/mobile and third-party-theme
 testing. Passing these gates does not establish that every device has been tested.
+
+## 0.16.2 verification
+
+Lint completed with no errors and nine retained compatibility warnings. Type checks,
+357 automated tests, the production build and three-file archive integrity checks passed.
+An isolated Obsidian 1.14.4 harness checked Markdown highlights, offscreen component
+release/remount and waterfall overlap using synthetic in-memory scale fixtures.
+
+Lightweight placeholders remain per loaded memo. Hidden-host frame callback waits were
+439-503 ms; their cause was not established. Synchronous click-handler timings alone
+do not establish visible-window responsiveness. Physical mobile, third-party themes,
+visible desktop frame latency and large-vault cold indexing remain unverified.

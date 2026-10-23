@@ -27,7 +27,7 @@ else {
   const result = await context.rebuild(); await context.dispose();
   const packages = new Set();
   for (const input of Object.keys(result.metafile.inputs)) {
-    const match = /^node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(input.replace(/\\/g, '/'));
+    const match = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(input.replace(/\\/g, '/'));
     if (match) packages.add(match[1]);
   }
   const notices = ['# Bundled third-party licenses', '', 'Host-provided dependencies are external to this bundle.', ''];

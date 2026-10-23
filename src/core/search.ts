@@ -3,6 +3,7 @@ import { MemoError, type Memo, type NavItem, type Settings } from './types';
 
 type Predicate = (memo: Memo) => boolean;
 type Token = { kind: 'term' | 'or' | 'not' | 'left' | 'right'; value: string; quoted?: boolean };
+const searchText = new WeakMap<Memo, { body: string; text: string }>();
 const fold = (text: string): string => text.normalize('NFKC').toLocaleLowerCase();
 
 export function matchesTag(tags: readonly string[], query: string): boolean {
@@ -40,16 +41,16 @@ function tokenize(query: string): Token[] {
   return result;
 }
 
-export function compileSearch(query: string): Predicate {
+export function compileSearch(query: string, terms?: string[]): Predicate {
   if (!query.trim()) return () => true;
   const tokens = tokenize(query);
   let cursor = 0;
-  const atom = (): Predicate => {
+  const atom = (negative = false): Predicate => {
     const token = tokens[cursor++];
     if (!token) throw new MemoError('invalidQuery');
-    if (token.kind === 'not') { const next = atom(); return memo => !next(memo); }
+    if (token.kind === 'not') { const next = atom(!negative); return memo => !next(memo); }
     if (token.kind === 'left') {
-      const nested = or();
+      const nested = or(negative);
       if (tokens[cursor++]?.kind !== 'right') throw new MemoError('invalidQuery');
       return nested;
     }
@@ -58,23 +59,29 @@ export function compileSearch(query: string): Predicate {
       token.value.startsWith('#') ? token.value.slice(1) : null;
     if (tag !== null) {
       if (!tag || /\s/.test(tag)) throw new MemoError('invalidQuery');
+      if (!negative) terms?.push(tag);
       return memo => matchesTag(memo.tags, tag);
     }
     if (!token.quoted && /^[\p{L}_][\w-]*:/u.test(token.value) && !/^(?:https?|obsidian):\/\//i.test(token.value)) {
       throw new MemoError('unsupportedQuery', token.value);
     }
     if (!token.quoted && token.value.startsWith('/')) throw new MemoError('unsupportedQuery', token.value);
+    if (!negative) terms?.push(token.value);
     const needle = fold(token.value);
-    return memo => fold(memo.body).includes(needle);
+    return memo => {
+      let cached = searchText.get(memo);
+      if (!cached || cached.body !== memo.body) { cached = { body: memo.body, text: fold(memo.body) }; searchText.set(memo, cached); }
+      return cached.text.includes(needle);
+    };
   };
-  const and = (): Predicate => {
-    const parts = [atom()];
-    while (cursor < tokens.length && tokens[cursor]?.kind !== 'or' && tokens[cursor]?.kind !== 'right') parts.push(atom());
+  const and = (negative = false): Predicate => {
+    const parts = [atom(negative)];
+    while (cursor < tokens.length && tokens[cursor]?.kind !== 'or' && tokens[cursor]?.kind !== 'right') parts.push(atom(negative));
     return memo => parts.every(test => test(memo));
   };
-  const or = (): Predicate => {
-    const parts = [and()];
-    while (tokens[cursor]?.kind === 'or') { cursor++; parts.push(and()); }
+  const or = (negative = false): Predicate => {
+    const parts = [and(negative)];
+    while (tokens[cursor]?.kind === 'or') { cursor++; parts.push(and(negative)); }
     return memo => parts.some(test => test(memo));
   };
   const result = or();

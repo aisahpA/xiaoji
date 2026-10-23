@@ -202,8 +202,17 @@ export class XiaojiSettings extends PluginSettingTab {
   }
 
   private slider(panel: HTMLElement, name: MessageKey, value: number, min: number, max: number, change: (value: number) => void): void {
-    new Setting(panel).setName(this.plugin.t(name)).addSlider(slider =>
-      slider.setLimits(min, max, 1).setValue(value).setDynamicTooltip().onChange(change));
+    const save = new AutoSave(error => this.plugin.report(error), 180, panel.ownerDocument.defaultView ?? window);
+    this.saves.add(save);
+    new Setting(panel).setName(this.plugin.t(name)).addSlider(slider => {
+      slider.setLimits(min, max, 1).setValue(value).setDynamicTooltip().onChange(next => {
+        const variable = name === 'cardWidth' ? (this.plugin.prefs.layout === 'list' ? 'list-width' : 'card-width') : name === 'foldHeight' ? 'fold-height' : name;
+        for (const root of panel.ownerDocument.querySelectorAll<HTMLElement>('.xj-root')) root.style.setProperty('--xj-' + variable, next + 'px');
+        save.schedule(() => change(next));
+      });
+      slider.sliderEl.addEventListener('change', () => { void save.flush(); });
+      slider.sliderEl.addEventListener('blur', () => { void save.flush(); });
+    });
   }
 
   private navigation(panel: HTMLElement): void {

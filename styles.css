@@ -528,3 +528,7 @@ body.xj-quick-window .xj-quick { padding: 6px 8px 8px; gap: 4px; }
 
 /* Invisible fallback used only when the Clipboard API is unavailable. */
 .xj-clipboard-fallback { position: fixed; opacity: 0; }
+.xj-root mark.xj-search-hit { background: color-mix(in srgb, #e8b43e 30%, var(--background-primary)); color: var(--text-normal); border-radius: 2px; box-decoration-break: clone; }
+.xj-search-context { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--background-modifier-border); color: var(--text-muted); font-size: var(--font-ui-small); overflow-wrap: anywhere; white-space: pre-wrap; }
+.xj-search-context .xj-text-button { display: block; }
+.xj-card-slot { min-width: 0; align-self: start; width: 100%; height: var(--xj-slot-height, auto); }

@@ -4,6 +4,8 @@ import 'moment/locale/zh-cn';
 // Obsidian installs these helpers in every desktop/popout document.
 if (typeof window !== 'undefined') {
   Object.defineProperty(window.Document.prototype, 'win', { configurable: true, get() { return this.defaultView; } });
+  Object.defineProperty(window.HTMLElement.prototype, 'setCssProps', { configurable: true, value: function(this: HTMLElement, props: Record<string, string>) { for (const [key, value] of Object.entries(props)) this.style.setProperty(key, value); } });
+  Object.defineProperty(window.DocumentFragment.prototype, 'createDiv', { configurable: true, value: function(this: DocumentFragment) { return this.createEl('div'); } });
   window.createFragment = () => window.document.createDocumentFragment();
   for (const prototype of [window.HTMLElement.prototype, window.DocumentFragment.prototype]) {
     Object.defineProperty(prototype, 'createEl', { configurable: true, value: function(this: HTMLElement | DocumentFragment, tag: string) {
