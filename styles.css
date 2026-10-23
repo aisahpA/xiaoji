@@ -525,3 +525,6 @@ body.xj-quick-window .xj-quick { padding: 6px 8px 8px; gap: 4px; }
 .xj-trash-toolbar .xj-trash-search { flex: 1 1 160px; width: auto; min-width: 100px; }
 .xj-trash-toolbar .xj-trash-controls { flex: 0 1 auto; margin: 0; gap: 8px; }
 .xj-trash-controls > .xj-muted { font-size: var(--font-ui-small); white-space: nowrap; }
+
+/* Invisible fallback used only when the Clipboard API is unavailable. */
+.xj-clipboard-fallback { position: fixed; opacity: 0; }

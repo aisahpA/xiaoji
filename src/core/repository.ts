@@ -1,3 +1,4 @@
+import { sleep } from './timers';
 import { TrashFiles } from './trash-files';
 import { fileForDate, headingForDate, timestamp } from './dates';
 import { appendMemo, changeFlag, features, findUnchanged, parseMarkdown, parseMemos, replaceMemo, serializeMemo } from './markdown';
@@ -153,7 +154,7 @@ export class Repository {
       for (let attempt = 0; attempt < 8; attempt++) {
         const date = this.clock();
         const id = timestamp(date);
-        if (this.records.some(memo => memo.id === id)) { await new Promise(resolve => setTimeout(resolve, 2)); continue; }
+        if (this.records.some(memo => memo.id === id)) { await sleep(2); continue; }
         const path = fileForDate(date, settings);
         await this.ensureFile(path);
         let result: Memo | undefined;
@@ -167,7 +168,7 @@ export class Repository {
             return next;
           });
         } catch (error) {
-          if (error instanceof MemoError && error.code === 'duplicate') { await new Promise(resolve => setTimeout(resolve, 2)); continue; }
+          if (error instanceof MemoError && error.code === 'duplicate') { await sleep(2); continue; }
           throw error;
         }
         if (!result) throw new MemoError('writeFailed');
@@ -220,7 +221,7 @@ export class Repository {
       if (node.type === 'listItem' && typeof node.checked === 'boolean' && node.position?.start.offset !== undefined) {
         items.push({ offset: node.position.start.offset, checked: node.checked });
       }
-      if ('children' in node) for (const child of node.children) visit(child as Nodes);
+      if ('children' in node) for (const child of node.children) visit(child);
     };
     visit(parseMarkdown(snapshot.body));
     const item = items[index];

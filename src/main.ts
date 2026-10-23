@@ -2,13 +2,14 @@ import {
   Plugin, TFile, TFolder, Notice, Platform, Menu, getLanguage,
   type App, type WorkspaceLeaf,
 } from 'obsidian';
+import { secretStore } from './core/secret-store';
 import { quickBounds, type WindowBounds } from './core/quick-window';
 import { Repository } from './core/repository';
 import { Conversations } from './core/conversations';
 import { fileForDate, displayDate, timestamp, validateStorageSettings } from './core/dates';
 import { parseMemos } from './core/markdown';
 import { rewriteLinks } from './core/links';
-import { loadSettings, normalizeFolder, safeFileName, isChatPath } from './core/settings';
+import { hasControlCharacters, loadSettings, normalizeFolder, safeFileName, isChatPath } from './core/settings';
 import { MemoError, type Draft, type FilePort, type Memo, type NavItem, type PluginData, type Settings } from './core/types';
 import { isMessageKey, resolveLanguage, translate, type Locale, type MessageKey } from './i18n';
 import { MemoView, QuickView, VIEW_TYPE, QUICK_TYPE } from './ui/view';
@@ -79,10 +80,10 @@ export default class XiaojiPlugin extends Plugin {
   repo!: Repository;
   chats!: Conversations;
   private subscribers = new Set<() => void>();
-  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private refreshTimer: number | null = null;
   private saving: Promise<void> | null = null;
   private dirty = false;
-  private draftTimer: ReturnType<typeof setTimeout> | null = null;
+  private draftTimer: number | null = null;
   private settingsTail: Promise<unknown> = Promise.resolve();
   private sessionApiKey = '';
   private tagCache: string[] | null = null;
@@ -169,7 +170,7 @@ export default class XiaojiPlugin extends Plugin {
 
   onunload(): void {
     this.stopped = true;
-    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    if (this.refreshTimer) window.clearTimeout(this.refreshTimer);
     this.subscribers.clear();
     this.sessionApiKey = '';
     void this.flushDrafts().catch(() => undefined);
@@ -181,8 +182,8 @@ export default class XiaojiPlugin extends Plugin {
   }
   notify(): void { if (!this.stopped) for (const callback of this.subscribers) callback(); }
   refreshSoon(): void {
-    if (this.refreshTimer) clearTimeout(this.refreshTimer);
-    this.refreshTimer = setTimeout(() => { this.refreshTimer = null; void this.refresh().catch(error => this.report(error)); }, 180);
+    if (this.refreshTimer) window.clearTimeout(this.refreshTimer);
+    this.refreshTimer = window.setTimeout(() => { this.refreshTimer = null; void this.refresh().catch(error => this.report(error)); }, 180);
   }
   async refresh(): Promise<void> {
     try { await this.repo.scan(); this.tagCache = null; this.readError = false; }
@@ -213,7 +214,7 @@ export default class XiaojiPlugin extends Plugin {
   }
 
   persist(): Promise<void> {
-    if (this.draftTimer) { clearTimeout(this.draftTimer); this.draftTimer = null; }
+    if (this.draftTimer) { window.clearTimeout(this.draftTimer); this.draftTimer = null; }
     this.dirty = true;
     if (this.saving) return this.saving;
     this.saving = (async () => {
@@ -230,12 +231,12 @@ export default class XiaojiPlugin extends Plugin {
   }
 
   scheduleDraftSave(): void {
-    if (this.draftTimer) clearTimeout(this.draftTimer);
-    this.draftTimer = setTimeout(() => { this.draftTimer = null; void this.persist().catch(error => this.report(error)); }, 250);
+    if (this.draftTimer) window.clearTimeout(this.draftTimer);
+    this.draftTimer = window.setTimeout(() => { this.draftTimer = null; void this.persist().catch(error => this.report(error)); }, 250);
   }
   flushDrafts(): Promise<void> {
     if (!this.draftTimer) return this.saving ?? Promise.resolve();
-    clearTimeout(this.draftTimer); this.draftTimer = null; return this.persist();
+    window.clearTimeout(this.draftTimer); this.draftTimer = null; return this.persist();
   }
   setDraft(key: string, text: string, memo?: Memo, metadata: Partial<Draft> = {}): void {
     if (text) this.data.drafts[key] = { ...metadata, text, updatedAt: Date.now(), memoKey: memo?.key, originalRaw: memo?.raw };
@@ -258,7 +259,7 @@ export default class XiaojiPlugin extends Plugin {
 
   async addAttachment(file: File, sourcePath: string): Promise<string> {
     const supplied = file.name || 'attachment-' + timestamp();
-    const name = safeFileName(supplied.replace(/[\\/:*?"<>|\x00-\x1f]/g, '-').replace(/[. ]+$/, '') || 'attachment');
+    const name = safeFileName([...supplied].map(character => /[\\/:*?"<>|]/.test(character) || hasControlCharacters(character) ? '-' : character).join('').replace(/[. ]+$/, '') || 'attachment');
     const path = await this.app.fileManager.getAvailablePathForAttachment(name, sourcePath);
     const slash = path.lastIndexOf('/');
     await this.files.ensureFolder(slash < 0 ? '' : path.slice(0, slash));
@@ -309,7 +310,7 @@ export default class XiaojiPlugin extends Plugin {
   }
   quickWindowControls(leaf: WorkspaceLeaf): boolean {
     const native = this.nativeWindow(leaf);
-    return Boolean(native?.minimize && native.maximize && native.unmaximize && native.isMaximized);
+    return native !== null && native !== undefined && ['minimize', 'maximize', 'unmaximize', 'isMaximized'].every(key => typeof Reflect.get(native, key) === 'function');
   }
   quickWindowMaximized(leaf: WorkspaceLeaf): boolean { try { return this.nativeWindow(leaf)?.isMaximized?.() ?? false; } catch { return false; } }
   quickWindowAction(leaf: WorkspaceLeaf, action: 'minimize' | 'maximize' | 'close'): void {
@@ -373,7 +374,7 @@ export default class XiaojiPlugin extends Plugin {
   }
   watchQuickBounds(leaf: WorkspaceLeaf): () => void {
     const win = leaf.view.containerEl.ownerDocument.defaultView, native = this.nativeWindow(leaf);
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;
     const save = (): void => {
       try {
         if (native?.isMinimized?.() || native?.isMaximized?.()) return;
@@ -381,10 +382,10 @@ export default class XiaojiPlugin extends Plugin {
         if (bounds && Object.values(bounds).every(Number.isFinite) && bounds.width > 0 && bounds.height > 0) this.app.saveLocalStorage('xiaoji-quick-size', bounds);
       } catch { /* A closing native window may already be destroyed. */ }
     };
-    const schedule = (): void => { clearTimeout(timer); timer = setTimeout(save, 150); };
+    const schedule = (): void => { window.clearTimeout(timer); timer = window.setTimeout(save, 150); };
     native?.on?.('move', schedule); native?.on?.('resize', schedule);
     win?.addEventListener('resize', schedule); win?.addEventListener('blur', schedule);
-    return () => { clearTimeout(timer); save();
+    return () => { window.clearTimeout(timer); save();
       try { native?.removeListener?.('move', schedule); native?.removeListener?.('resize', schedule); } catch { /* Window already closed. */ }
       win?.removeEventListener('resize', schedule); win?.removeEventListener('blur', schedule);
     };
@@ -447,8 +448,8 @@ export default class XiaojiPlugin extends Plugin {
       await document.defaultView.navigator.clipboard.writeText(value); if (notify) new Notice(this.t('copied'));
     }
     catch {
-      const area = document.createElement('textarea');
-      area.value = value; area.style.position = 'fixed'; area.style.opacity = '0';
+      const area = document.win.createFragment().createEl('textarea');
+      area.value = value; area.className = 'xj-clipboard-fallback';
       const active = document.activeElement as HTMLElement | null, selection = document.getSelection();
       const ranges = selection ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index).cloneRange()) : [];
       document.body.appendChild(area); area.select();
@@ -503,22 +504,23 @@ export default class XiaojiPlugin extends Plugin {
     for (const node of nodes) {
       const text = node.data, matches = [...text.matchAll(/(?<![\p{L}\p{N}_])@(\d{17}|\d{14})(?!\d)/gu)];
       if (!matches.length) continue;
-      const fragment = root.ownerDocument.createDocumentFragment(); let cursor = 0;
+      const fragment = root.ownerDocument.win.createFragment(); let cursor = 0;
       for (const match of matches) {
         fragment.append(text.slice(cursor, match.index));
-        const link = root.ownerDocument.createElement('a'); link.className = 'xj-reference'; link.textContent = match[0]; link.href = '#';
+        const link = fragment.createEl('a'); link.className = 'xj-reference'; link.textContent = match[0]; link.href = '#';
         link.dataset.xjId = match[1]!;
-        fragment.append(link); cursor = match.index! + match[0].length;
+        fragment.append(link); cursor = match.index + match[0].length;
       }
       fragment.append(text.slice(cursor)); node.replaceWith(fragment);
     }
   }
 
   apiKey(): string {
-    return this.app.secretStorage?.getSecret(this.prefs.aiSecretName) || this.sessionApiKey;
+    return secretStore(this.app)?.getSecret(this.prefs.aiSecretName) || this.sessionApiKey;
   }
   setApiKey(value: string): void {
-    if (this.app.secretStorage) this.app.secretStorage.setSecret(this.prefs.aiSecretName, value);
+    const store = secretStore(this.app);
+    if (store) store.setSecret(this.prefs.aiSecretName, value);
     else this.sessionApiKey = value;
   }
 

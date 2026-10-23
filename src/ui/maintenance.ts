@@ -29,7 +29,7 @@ export class ReformatModal extends Modal {
         if (!details.open || rendered) return; rendered = true;
         for (const [title, text] of [[p.t('beforeFormat'), file.before], [p.t('afterFormat'), file.after]]) {
           element(details, 'small', 'xj-muted', title);
-          element(element(details, 'pre'), 'code', '', text!);
+          element(element(details, 'pre'), 'code', '', text);
         }
       });
     }

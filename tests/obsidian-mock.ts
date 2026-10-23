@@ -1,3 +1,16 @@
+export { default as moment } from 'moment';
+import 'moment/locale/zh-cn';
+
+// Obsidian installs these helpers in every desktop/popout document.
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window.Document.prototype, 'win', { configurable: true, get() { return this.defaultView; } });
+  window.createFragment = () => window.document.createDocumentFragment();
+  for (const prototype of [window.HTMLElement.prototype, window.DocumentFragment.prototype]) {
+    Object.defineProperty(prototype, 'createEl', { configurable: true, value: function(this: HTMLElement | DocumentFragment, tag: string) {
+      const node = this.ownerDocument.createElement(tag); this.appendChild(node); return node;
+    } });
+  }
+}
 import { parseMarkdown } from '../src/core/markdown';
 import type { Nodes } from 'mdast';
 
@@ -62,7 +75,7 @@ export class Notice {
   static messages: string[] = [];
   constructor(message: string | DocumentFragment, _duration?: number) { Notice.messages.push(typeof message === 'string' ? message : message.textContent ?? ''); }
 }
-export const Platform = { isMobile: false, isDesktop: true };
+export const Platform = { isMobile: false, isDesktop: true, isMacOS: false, isIosApp: false };
 export const getLanguage = (): string => 'zh';
 export const getAllTags = (cache: { tags?: { tag: string }[] }): string[] => cache.tags?.map(item => item.tag) ?? [];
 export function setIcon(element: HTMLElement, name: string): void {

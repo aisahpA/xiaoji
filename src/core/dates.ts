@@ -1,5 +1,7 @@
-import moment from 'moment';
-import 'moment/locale/zh-cn';
+import { moment as hostMoment } from 'obsidian';
+import type momentFactory from 'moment';
+// The host exports the callable factory; its declaration uses a namespace import.
+const moment = hostMoment as unknown as typeof momentFactory;
 import { MemoError, type Grouping, type Settings } from './types';
 import { normalizeFolder, safeFileName } from './settings';
 

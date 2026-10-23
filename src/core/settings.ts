@@ -54,12 +54,14 @@ const record = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown> : {};
 
+export const hasControlCharacters = (value: string): boolean => [...value].some(character => character.charCodeAt(0) < 32);
+
 export function normalizeFolder(value: string): string {
   const path = value.trim().replace(/\\/g, '/').replace(/\/+$/, '');
   const parts = path.split('/');
   if (!path || path.startsWith('/') || parts.some(part =>
     !part || part === '.' || part === '..' || part.startsWith('.') ||
-    /[<>:"|?*\x00-\x1f]/.test(part) || /[. ]$/.test(part) ||
+    (/[<>:"|?*]/.test(part) || hasControlCharacters(part)) || /[. ]$/.test(part) ||
     /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) {
     throw new MemoError('invalidFolder');
   }
@@ -68,7 +70,7 @@ export function normalizeFolder(value: string): string {
 
 export function safeFileName(value: string): string {
   const name = value.trim();
-  if (!name || /[\\/:*?"<>|\x00-\x1f]/.test(name) || /[. ]$/.test(name) ||
+  if (!name || (/[\\/:*?"<>|]/.test(name) || hasControlCharacters(name)) || /[. ]$/.test(name) ||
     name.startsWith('.') || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) ||
     name.length > 180) throw new MemoError('invalidFileName');
   return name;

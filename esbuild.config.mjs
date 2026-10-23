@@ -40,5 +40,6 @@ else {
   }
   const text = notices.join('\n');
   await fs.writeFile('THIRD_PARTY_NOTICES.md', text);
-  await fs.appendFile('main.js', '\n/*!\n' + text.replace(/\*\//g, '* /') + '\n*/\n');
+  const projectLicense = await fs.readFile('LICENSE', 'utf8');
+  await fs.appendFile('main.js', '\n/*!\n' + (projectLicense + '\n' + text).replace(/\*\//g, '* /') + '\n*/\n');
 }

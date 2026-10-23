@@ -1,4 +1,5 @@
-import { PluginSettingTab, Setting, type App, type TextComponent } from 'obsidian';
+import { secretStore } from '../core/secret-store';
+import { PluginSettingTab, Setting, Platform, type App, type TextComponent } from 'obsidian';
 import type XiaojiPlugin from '../main';
 import { DEFAULT_SETTINGS, densityValues, loadSettings, normalizeFolder } from '../core/settings';
 import { fileForDate, headingForDate, validateStorageSettings } from '../core/dates';
@@ -27,13 +28,15 @@ export class XiaojiSettings extends PluginSettingTab {
     bindErrors(this.containerEl, error => plugin.report(error));
   }
 
-  display(): void {
+  display(): void { this.render(); }
+
+  private render(): void {
     const p = this.plugin; this.sorter?.destroy(); this.sorter = null;
     for (const save of this.saves) void save.close(); this.saves.clear();
     empty(this.containerEl); this.containerEl.classList.add('xj-settings');
     const navigation = element(this.containerEl, 'nav', 'xj-settings-tabs');
     for (const section of ['storage', 'appearance', 'enhancements', 'general'] as const) {
-      const node = button(navigation, p.t(section), async () => { await this.flush(); this.section = section; this.display(); }, undefined, 'xj-nav-button');
+      const node = button(navigation, p.t(section), async () => { await this.flush(); this.section = section; this.render(); }, undefined, 'xj-nav-button');
       node.classList.toggle('is-active', section === this.section);
     }
     const panel = element(this.containerEl, 'div', 'xj-settings-panel');
@@ -46,7 +49,7 @@ export class XiaojiSettings extends PluginSettingTab {
     }
   }
 
-  private redisplay(): void { const host = this.containerEl.closest<HTMLElement>('.vertical-tab-content') ?? this.containerEl; const scroll = host.scrollTop; this.display(); host.scrollTop = scroll; }
+  private redisplay(): void { const host = this.containerEl.closest<HTMLElement>('.vertical-tab-content') ?? this.containerEl; const scroll = host.scrollTop; this.render(); host.scrollTop = scroll; }
   private async flush(): Promise<void> { await Promise.all([...this.saves].map(save => save.flush())); }
   hide(): void { this.sorter?.destroy(); this.sorter = null; for (const save of this.saves) void save.close(); this.saves.clear(); }
   private fieldError(input: HTMLElement, error?: unknown): void {
@@ -63,7 +66,7 @@ export class XiaojiSettings extends PluginSettingTab {
     } else { message.textContent = ''; input.removeAttribute('aria-describedby'); }
   }
   private autoText(input: HTMLInputElement | HTMLTextAreaElement, commit: (value: string) => Promise<void> | void): AutoSave {
-    const save = new AutoSave(error => this.fieldError(input, error)); this.saves.add(save);
+    const save = new AutoSave(error => this.fieldError(input, error), 400, input.ownerDocument.defaultView ?? window); this.saves.add(save);
     let revision = 0;
     const changed = (): void => {
       const value = input.value, current = ++revision;
@@ -81,7 +84,7 @@ export class XiaojiSettings extends PluginSettingTab {
       if (redraw) {
         const scroll = this.containerEl.scrollTop;
         const host = this.containerEl.closest<HTMLElement>('.vertical-tab-content'); const hostScroll = host?.scrollTop;
-        this.display(); this.containerEl.scrollTop = scroll; if (host && hostScroll !== undefined) host.scrollTop = hostScroll;
+        this.render(); this.containerEl.scrollTop = scroll; if (host && hostScroll !== undefined) host.scrollTop = hostScroll;
       }
     })().catch(error => this.plugin.report(error));
   }
@@ -91,7 +94,7 @@ export class XiaojiSettings extends PluginSettingTab {
     let filename!: TextComponent, heading!: TextComponent;
     let headingLevel!: Setting, headingFormat!: Setting;
     let source: HTMLElement = panel;
-    const save = new AutoSave(error => this.fieldError(source, error)); this.saves.add(save);
+    const save = new AutoSave(error => this.fieldError(source, error), 400, panel.ownerDocument.defaultView ?? window); this.saves.add(save);
     const sample = element(panel, 'div', 'xj-storage-preview');
     sample.title = p.t('storageHint');
     const preview = (): void => {
@@ -250,7 +253,7 @@ export class XiaojiSettings extends PluginSettingTab {
     new Setting(panel).setName(p.t('endpoint')).addText(text => { text.setValue(p.prefs.aiBaseUrl); this.autoText(text.inputEl, value => { if (value.trim()) chatEndpoint(value); return p.updateSettings({ aiBaseUrl: value }); }); });
     new Setting(panel).setName(p.t('model')).addText(text => { text.setValue(p.prefs.aiModel); this.autoText(text.inputEl, value => p.updateSettings({ aiModel: value })); });
     let password!: TextComponent, secretSave!: AutoSave;
-    const key = new Setting(panel).setName(p.t('apiKey')).setDesc(p.t(p.app.secretStorage ? 'secretSaved' : 'sessionSecret'));
+    const key = new Setting(panel).setName(p.t('apiKey')).setDesc(p.t(secretStore(p.app) ? 'secretSaved' : 'sessionSecret'));
     key.addText(text => {
       password = text; text.inputEl.type = 'password'; text.inputEl.autocomplete = 'off'; text.setPlaceholder(p.apiKey() ? '••••••••' : '');
       secretSave = this.autoText(text.inputEl, value => { p.setApiKey(value.trim()); text.setPlaceholder(value.trim() ? '••••••••' : ''); });
@@ -298,7 +301,7 @@ export class XiaojiSettings extends PluginSettingTab {
         event.preventDefault(); event.stopPropagation();
         if (event.key === 'Escape') { recording = false; label(); return; }
         if (event.repeat || ['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return;
-        const chord = eventShortcut(event, /Mac|iPhone|iPad/.test(panel.ownerDocument.defaultView?.navigator.platform ?? ''));
+        const chord = eventShortcut(event, (Platform.isMacOS || Platform.isIosApp));
         if (!chord) { p.report(new MemoError('invalidShortcut')); return; }
         if (chord === p.prefs[field === 'submitKey' ? 'newlineKey' : 'submitKey']) { p.report(new MemoError('shortcutConflict')); return; }
         recording = false; control.setDisabled(true);

@@ -3,5 +3,5 @@ import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   resolve: { alias: { obsidian: fileURLToPath(new URL('./tests/obsidian-mock.ts', import.meta.url)) } },
-  test: { include: ['tests/**/*.test.ts'], environment: 'node', restoreMocks: true },
+  test: { include: ['tests/**/*.test.ts'], environment: 'node', restoreMocks: true, setupFiles: ['tests/setup-window.ts'] },
 });

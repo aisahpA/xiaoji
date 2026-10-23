@@ -9,7 +9,7 @@ export function citedEvidence(answer: string, evidence: Evidence[]): Evidence[] 
   const visit = (node: Nodes): void => {
     if (node.type === 'code' || node.type === 'inlineCode' || node.type === 'html') return;
     if (node.type === 'text') for (const match of node.value.matchAll(/\[(\d+)\]/g)) numbers.add(Number(match[1]));
-    if ('children' in node) for (const child of node.children) visit(child as Nodes);
+    if ('children' in node) for (const child of node.children) visit(child);
   };
   visit(parseMarkdown(answer)); return evidence.filter(source => numbers.has(source.number));
 }
@@ -110,9 +110,14 @@ export function retrievePlanned(question: string, plan: SearchPlan, candidates: 
   return retrieve([question, ...plan.queries].join(' '), candidates, settings);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 export function contentFromResponse(value: unknown): string {
-  const response = value as { choices?: { message?: { content?: unknown } }[] };
-  const content = response?.choices?.[0]?.message?.content;
+  const first: unknown = isRecord(value) && Array.isArray(value.choices) ? value.choices[0] : undefined;
+  const message = isRecord(first) ? first.message : undefined;
+  const content = isRecord(message) ? message.content : undefined;
   if (typeof content !== 'string' || !content.trim()) throw new MemoError('aiEmpty');
   return content;
 }
@@ -125,10 +130,14 @@ export async function* readSse(stream: ReadableStream<Uint8Array>, signal: Abort
     const payload = event.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
     if (!payload) return { done: false, text: '' };
     if (payload.trim() === '[DONE]') return { done: true, text: '' };
-    let value: { choices?: { delta?: { content?: unknown } }[]; error?: unknown };
+    let value: unknown;
     try { value = JSON.parse(payload); } catch { throw new MemoError('aiRequestFailed'); }
-    if (value.error) throw new MemoError('aiRequestFailed');
-    const text = value.choices?.[0]?.delta?.content;
+    if (!isRecord(value) || value.error || (value.choices !== undefined && !Array.isArray(value.choices))) throw new MemoError('aiRequestFailed');
+    const first: unknown = Array.isArray(value.choices) ? value.choices[0] : undefined;
+    if (first !== undefined && !isRecord(first)) throw new MemoError('aiRequestFailed');
+    const delta = isRecord(first) ? first.delta : undefined;
+    if (delta !== undefined && delta !== null && !isRecord(delta)) throw new MemoError('aiRequestFailed');
+    const text = isRecord(delta) ? delta.content : undefined;
     return { done: false, text: typeof text === 'string' ? text : '' };
   };
   const abort = (): void => { void reader.cancel().catch(() => undefined); };

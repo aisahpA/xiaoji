@@ -32,8 +32,8 @@ export class ReferencePreview extends Component {
   private popup: HTMLElement | null = null;
   private content: Component | null = null;
   private revision = 0;
-  private hold: ReturnType<typeof setTimeout> | undefined;
-  private closeTimer: ReturnType<typeof setTimeout> | undefined;
+  private hold: number | undefined;
+  private closeTimer: number | undefined;
   private touchStart: { x: number; y: number } | null = null;
   private suppress: HTMLElement | null = null;
   constructor(private plugin: XiaojiPlugin) { super(); this.register(() => this.close()); this.load(); }
@@ -61,7 +61,7 @@ export class ReferencePreview extends Component {
     root.addEventListener('pointerdown', event => {
       const link = target(event); if (!link) return;
       this.clearHold(); this.target = link; this.suppress = null; this.touchStart = { x: event.clientX, y: event.clientY };
-      if (event.pointerType === 'touch') this.hold = setTimeout(() => {
+      if (event.pointerType === 'touch') this.hold = window.setTimeout(() => {
         this.suppress = link; void this.show(link);
       }, 500);
     }, options);
@@ -92,14 +92,14 @@ export class ReferencePreview extends Component {
     const win = doc.defaultView;
     if (win) { this.registerDomEvent(win, 'blur', () => this.close()); this.registerDomEvent(win, 'resize', () => this.close()); }
   }
-  private clearHold(): void { clearTimeout(this.hold); this.hold = undefined; this.touchStart = null; }
-  private scheduleClose(): void { clearTimeout(this.closeTimer); this.closeTimer = setTimeout(() => this.close(), 180); }
+  private clearHold(): void { window.clearTimeout(this.hold); this.hold = undefined; this.touchStart = null; }
+  private scheduleClose(): void { window.clearTimeout(this.closeTimer); this.closeTimer = window.setTimeout(() => this.close(), 180); }
   close(): void {
-    this.revision++; this.clearHold(); clearTimeout(this.closeTimer);
+    this.revision++; this.clearHold(); window.clearTimeout(this.closeTimer);
     this.content?.unload(); this.content = null; this.popup?.remove(); this.popup = null; this.target = null;
   }
   private async show(link: HTMLElement): Promise<void> {
-    clearTimeout(this.closeTimer);
+    window.clearTimeout(this.closeTimer);
     if (this.target === link && this.popup) return;
     this.close(); this.target = link; const revision = this.revision, p = this.plugin;
     const doc = link.ownerDocument, popup = element(doc.body, 'aside', 'xj-reference-preview');
@@ -108,7 +108,7 @@ export class ReferencePreview extends Component {
       const anchor = (event.target as Element).closest<HTMLAnchorElement>('a.internal-link');
       if (anchor) { event.preventDefault(); void p.app.workspace.openLinkText(anchor.dataset.href ?? anchor.getAttribute('href') ?? '', popup.dataset.sourcePath ?? '', false).catch(error => p.report(error)); }
     });
-    popup.addEventListener('pointerenter', () => clearTimeout(this.closeTimer));
+    popup.addEventListener('pointerenter', () => window.clearTimeout(this.closeTimer));
     popup.addEventListener('pointerleave', () => this.scheduleClose());
     const header = element(popup, 'div', 'xj-reference-preview-heading');
     element(header, 'span', 'xj-muted', '@' + link.dataset.xjId);

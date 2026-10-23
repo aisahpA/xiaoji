@@ -10,7 +10,7 @@ export function rewriteLinks(body: string, resolve: (link: LinkTarget) => string
   const definitions = new Map<string, Extract<Nodes, { type: 'definition' }>>();
   const collect = (node: Nodes): void => {
     if (node.type === 'definition') definitions.set(node.identifier.toUpperCase(), node);
-    if ('children' in node) for (const child of node.children) collect(child as Nodes);
+    if ('children' in node) for (const child of node.children) collect(child);
   };
   collect(tree);
   const titled = (replacement: string, label: string, title: string | null | undefined, embed: boolean): string => {
@@ -42,11 +42,11 @@ export function rewriteLinks(body: string, resolve: (link: LinkTarget) => string
       for (const match of source.matchAll(/(!?)\[\[([^\]\n]+)\]\]/g)) {
         const parts = match[2]!.split('|');
         const replacement = resolve({ target: parts[0]!, label: parts.slice(1).join('|'), embed: match[1] === '!', wiki: true });
-        if (replacement) replacements.push({ start: start + match.index!, end: start + match.index! + match[0].length, text: replacement });
+        if (replacement) replacements.push({ start: start + match.index, end: start + match.index + match[0].length, text: replacement });
       }
       return;
     }
-    if ('children' in node) for (const child of node.children) visit(child as Nodes);
+    if ('children' in node) for (const child of node.children) visit(child);
   };
   visit(tree);
   let result = body;

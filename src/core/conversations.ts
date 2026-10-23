@@ -1,3 +1,4 @@
+import { sleep } from './timers';
 import { dateFromId, timestamp } from './dates';
 import { normalizeFolder } from './settings';
 import { MemoError, type FilePort, type Memo } from './types';
@@ -108,7 +109,8 @@ export class Conversations {
   async create(title: string): Promise<Conversation> {
     return this.enqueue(async () => {
       let id: string;
-      do { id = timestamp(); if (!(await this.files.exists(this.path(id))) && !(await this.readState(id))) break; await new Promise(resolve => setTimeout(resolve, 2)); } while (true);
+      id = timestamp();
+      while (await this.files.exists(this.path(id)) || await this.readState(id)) { await sleep(2); id = timestamp(); }
       const date = new Date().toISOString();
       const chat: Conversation = { id, title: title.slice(0, 100), createdAt: date, updatedAt: date, turns: [] };
       chat.raw = serializeConversation(chat); await this.writeState(id, this.stateText(chat, chat.raw));

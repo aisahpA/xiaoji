@@ -25,7 +25,7 @@ export function features(body: string): Pick<Memo, 'tags' | 'tasks'> {
       tasks.total++;
       if (!node.checked) tasks.incomplete++;
     }
-    if ('children' in node) for (const child of node.children) visit(child as Nodes);
+    if ('children' in node) for (const child of node.children) visit(child);
   };
   visit(parseMarkdown(body));
   return { tags: [...tags], tasks };

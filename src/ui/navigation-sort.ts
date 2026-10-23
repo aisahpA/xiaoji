@@ -4,7 +4,7 @@ const type = 'application/x-xiaoji-navigation';
 export class NavigationSort {
   private dragged: SortItem | null = null;
   private marker: HTMLElement | null = null;
-  private touch: { id: number; x: number; y: number; item: SortItem; node: HTMLElement; active: boolean; timer: ReturnType<typeof setTimeout>; target?: SortItem; after?: boolean; frame?: number } | null = null;
+  private touch: { id: number; x: number; y: number; item: SortItem; node: HTMLElement; active: boolean; timer: number; target?: SortItem; after?: boolean; frame?: number } | null = null;
   private document: Document | null = null;
   private suppress: { ids: string[]; until: number } | null = null;
   constructor(private root: HTMLElement, private move: (source: SortItem, target: SortItem, after: boolean) => Promise<void>, private step: (item: SortItem, direction: -1 | 1) => Promise<void>, private failed: (error: unknown) => void) {
@@ -60,7 +60,7 @@ export class NavigationSort {
   private clearMarker(): void { this.marker?.classList.remove('xj-drop-before', 'xj-drop-after'); this.marker = null; }
   private clear = (): void => {
     const touch = this.touch; this.touch = null;
-    if (touch) { clearTimeout(touch.timer); if (touch.frame !== undefined) this.document?.defaultView?.cancelAnimationFrame(touch.frame); touch.node.classList.remove('xj-touch-sorting'); try { touch.node.releasePointerCapture(touch.id); } catch { /* Pointer may already be cancelled by the host. */ } }
+    if (touch) { window.clearTimeout(touch.timer); if (touch.frame !== undefined) this.document?.defaultView?.cancelAnimationFrame(touch.frame); touch.node.classList.remove('xj-touch-sorting'); try { touch.node.releasePointerCapture(touch.id); } catch { /* Pointer may already be cancelled by the host. */ } }
     this.dragged = null; this.clearMarker();
   };
   private outsideDrop = (): void => { this.clear(); };
@@ -72,7 +72,7 @@ export class NavigationSort {
     if (!node || !this.root.contains(node) || target?.closest('input,textarea,[contenteditable="true"]')) return;
     // Settings handles reserve the gesture; list rows remain scrollable until the hold completes.
     this.clear(); const item = this.item(node);
-    const touch = { id: event.pointerId, x: event.clientX, y: event.clientY, node, item, active: false, timer: setTimeout(() => {
+    const touch = { id: event.pointerId, x: event.clientX, y: event.clientY, node, item, active: false, timer: window.setTimeout(() => {
       if (this.touch !== touch) return;
       touch.active = true; node.classList.add('xj-touch-sorting'); try { node.setPointerCapture(event.pointerId); } catch { /* Some host surfaces do not expose capture. */ }
       this.touchFrame();

@@ -1,17 +1,17 @@
-import { Component, Scope, type Modifier } from 'obsidian';
+import { Component, Scope, Platform, type Modifier } from 'obsidian';
 import type XiaojiPlugin from '../main';
 import { eventShortcut, normalizeShortcut } from '../core/shortcuts';
 
 export function submitMatches(event: KeyboardEvent, key: string, mac: boolean): boolean {
   const chord = eventShortcut(event, mac); return chord !== null && chord === normalizeShortcut(key);
 }
-export function shortcutLabel(key: string, doc: Document): string {
-  return key.replace('Mod', /Mac|iPhone|iPad/.test(doc.defaultView?.navigator.platform ?? '') ? '⌘' : 'Ctrl').replace(/-/g, ' + ');
+export function shortcutLabel(key: string, _doc: Document): string {
+  return key.replace('Mod', (Platform.isMacOS || Platform.isIosApp) ? '⌘' : 'Ctrl').replace(/-/g, ' + ');
 }
 /** Exact, live chords shared by CodeMirror, textarea and the host's focused scope. */
 export function bindSubmit(owner: Component, target: HTMLElement, plugin: XiaojiPlugin,
   submit: () => void | Promise<void>, composing: () => boolean = () => false, newline?: () => void, beforeShortcut?: (event: KeyboardEvent) => boolean): void {
-  const doc = target.ownerDocument, mac = /Mac|iPhone|iPad/.test(doc.defaultView?.navigator.platform ?? '');
+  const doc = target.ownerDocument, mac = (Platform.isMacOS || Platform.isIosApp);
   let ime = false;
   owner.registerDomEvent(target, 'compositionstart', () => { ime = true; });
   owner.registerDomEvent(target, 'compositionend', () => { ime = false; });

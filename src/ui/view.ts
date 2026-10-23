@@ -32,7 +32,7 @@ export class MemoView extends ItemView {
   private plugin: XiaojiPlugin;
   private root!: HTMLElement;
   private toolbar!: HTMLElement;
-  private revealTimer?: ReturnType<typeof setTimeout>;
+  private revealTimer?: number;
   private revealed?: HTMLElement;
   private referenceReturn: Record<string, unknown> | null = null;
   private sidebarEl!: HTMLElement;
@@ -89,7 +89,7 @@ export class MemoView extends ItemView {
   private automaticTag = '';
   private restoreScroll = 0;
   private positions = new Map<string, { scroll: number; limit: number }>();
-  private completedFeedback = new Map<string, { memo: Memo; scope: string; timer: ReturnType<typeof setTimeout> }>();
+  private completedFeedback = new Map<string, { memo: Memo; scope: string; timer: number }>();
 
   constructor(leaf: WorkspaceLeaf, plugin: XiaojiPlugin) { super(leaf); this.plugin = plugin; }
   getViewType(): string { return VIEW_TYPE; }
@@ -282,9 +282,9 @@ export class MemoView extends ItemView {
     this.composer.moveCursor(0);
   }
   private offerUndo(entries: TrashEntry[]): void {
-    const fragment = this.root.ownerDocument.createDocumentFragment();
+    const fragment = this.root.ownerDocument.win.createFragment();
     fragment.append(this.plugin.t('deleted') + ' ');
-    const undo = this.root.ownerDocument.createElement('button'); undo.textContent = this.plugin.t('undoDelete');
+    const undo = fragment.createEl('button'); undo.textContent = this.plugin.t('undoDelete');
     undo.addEventListener('click', () => {
       undo.disabled = true;
       this.run(async () => {
@@ -625,7 +625,7 @@ export class MemoView extends ItemView {
 
   private createCard(memo: Memo): Card {
     const p = this.plugin;
-    const node = this.root.ownerDocument.createElement('article');
+    const node = this.root.ownerDocument.win.createFragment().createEl('article');
     node.className = 'xj-card'; node.setAttribute('role', 'listitem');
     const component = new Component(); component.load();
     const heading = element(node, 'div', 'xj-card-heading');
@@ -700,8 +700,8 @@ export class MemoView extends ItemView {
               const updated = await p.repo.toggleTask(memo, index);
               const kind = this.current().kind;
               if (kind === 'tasks' && updated.tasks.incomplete === 0 && !p.prefs.tasksIncludeCompleted) {
-                const previous = this.completedFeedback.get(updated.key); if (previous) clearTimeout(previous.timer);
-                const timer = setTimeout(() => { this.completedFeedback.delete(updated.key); if (!this.closed) this.renderFeed(); }, 1000);
+                const previous = this.completedFeedback.get(updated.key); if (previous) window.clearTimeout(previous.timer);
+                const timer = window.setTimeout(() => { this.completedFeedback.delete(updated.key); if (!this.closed) this.renderFeed(); }, 1000);
                 this.completedFeedback.set(updated.key, { memo: updated, scope: this.stateKey(), timer });
               }
             } finally { await p.refresh(); }
@@ -793,9 +793,9 @@ export class MemoView extends ItemView {
     this.expanded.add(memo.key); this.render(true);
     const card = this.cards.get(memo.key);
     if (card) { card.el.scrollIntoView({ block: 'center' });
-      clearTimeout(this.revealTimer); this.revealed?.classList.remove('is-revealed');
+      window.clearTimeout(this.revealTimer); this.revealed?.classList.remove('is-revealed');
       this.revealed = card.el; void card.el.offsetWidth; card.el.classList.add('is-revealed');
-      this.revealTimer = setTimeout(() => card.el.classList.remove('is-revealed'), 1800); }
+      this.revealTimer = window.setTimeout(() => card.el.classList.remove('is-revealed'), 1800); }
   }
 
   async onClose(): Promise<void> {
@@ -803,10 +803,10 @@ export class MemoView extends ItemView {
     this.marqueeCleanup?.(); this.marqueeCleanup = null;
     this.searchPanel?.destroy();
     if (this.feedFrame !== null) this.root.ownerDocument.defaultView?.cancelAnimationFrame(this.feedFrame); this.feedFrame = null;
-    clearTimeout(this.revealTimer);
+    window.clearTimeout(this.revealTimer);
     this.closed = true; this.sorter?.destroy(); this.sorter = null; this.askPanel?.unload(); this.trashPanel?.unload();
     this.unsubscribe?.(); this.observer?.disconnect(); this.cardObserver?.disconnect(); this.intersection?.disconnect();
-    for (const feedback of this.completedFeedback.values()) clearTimeout(feedback.timer);
+    for (const feedback of this.completedFeedback.values()) window.clearTimeout(feedback.timer);
     this.completedFeedback.clear();
     this.composer?.unload(); this.composer = null;
     for (const card of this.cards.values()) this.disposeCard(card);

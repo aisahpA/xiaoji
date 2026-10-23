@@ -102,7 +102,7 @@ export class MemoEditor extends Component {
     const footer = element(this.root, 'div', 'xj-composer-actions');
     const left = element(footer, 'div', 'xj-composer-tools');
     button(left, plugin.t('attach'), () => {
-      const input = this.root.ownerDocument.createElement('input');
+      const input = this.root.ownerDocument.win.createFragment().createEl('input');
       input.type = 'file'; input.multiple = true;
       input.addEventListener('change', () => { if (input.files) void this.addFiles([...input.files]); });
       input.click();

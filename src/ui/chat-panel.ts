@@ -1,3 +1,4 @@
+import { sleep } from '../core/timers';
 import { Component, MarkdownRenderer, Menu, Notice, setIcon } from 'obsidian';
 import type XiaojiPlugin from '../main';
 import { buildAssistantChat, DEFAULT_AI_PROMPT, ordinaryQuestion, modelQuestion, buildPlan, chatEndpoint, citedEvidence, parsePlan, retrieve, retrievePlanned, type SearchPlan, type Evidence, type ChatMessage } from '../core/ai';
@@ -122,7 +123,7 @@ export class AskPanel extends Component {
       this.syncTitle();
       await this.draw();
       if (!this.disposed) { this.status.textContent = ''; this.focus(); }
-    } catch (error) {
+    } catch {
       if (!this.disposed) this.showError(this.plugin.t('chatInvalid'));
     } finally { if (!this.disposed) this.setLocked(false); }
   }
@@ -236,16 +237,16 @@ export class AskPanel extends Component {
     this.transcript.scrollTop = follow ? this.transcript.scrollHeight : top;
   }
   private copyAction(parent: HTMLElement, text: string): void {
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;
     const copy = button(parent, this.plugin.t('messageCopy'), async () => {
       try {
         await this.plugin.clipboard(text, parent.ownerDocument, false);
         if (!copy.isConnected) return;
-        clearTimeout(timer); setIcon(copy, 'check'); copy.setAttribute('aria-label', this.plugin.t('copied')); copy.title = this.plugin.t('copied');
-        timer = setTimeout(() => { if (copy.isConnected) { setIcon(copy, 'copy'); copy.setAttribute('aria-label', this.plugin.t('messageCopy')); copy.title = this.plugin.t('messageCopy'); } }, 1400);
+        window.clearTimeout(timer); setIcon(copy, 'check'); copy.setAttribute('aria-label', this.plugin.t('copied')); copy.title = this.plugin.t('copied');
+        timer = window.setTimeout(() => { if (copy.isConnected) { setIcon(copy, 'copy'); copy.setAttribute('aria-label', this.plugin.t('messageCopy')); copy.title = this.plugin.t('messageCopy'); } }, 1400);
       } catch (error) { this.plugin.report(error); }
     }, 'copy', 'xj-chat-copy');
-    this.renderComponent.register(() => clearTimeout(timer));
+    this.renderComponent.register(() => window.clearTimeout(timer));
   }
   private codeActions(answer: HTMLElement): void {
     for (const pre of answer.querySelectorAll<HTMLElement>('pre')) {
@@ -278,21 +279,23 @@ export class AskPanel extends Component {
     let node: Node | null;
     while ((node = walker.nextNode())) if (!node.parentElement?.closest('a,code,pre')) nodes.push(node as Text);
     for (const text of nodes) {
-      const fragment = text.ownerDocument.createDocumentFragment(); let offset = 0, changed = false;
+      const fragment = text.ownerDocument.win.createFragment(); let offset = 0, changed = false;
       for (const match of text.data.matchAll(/\[(\d+)\]/g)) {
         const source = sources.find(source => source.number === Number(match[1])); if (!source) continue;
         fragment.append(text.data.slice(offset, match.index));
-        const link = text.ownerDocument.createElement('a'); link.href = '#'; link.className = 'xj-evidence-link'; link.textContent = match[0];
-        link.addEventListener('click', async event => {
-          event.preventDefault();
-          const turn = link.closest('.xj-chat-turn');
-          const card = [...(turn?.querySelectorAll<HTMLElement>('.xj-chat-source') ?? [])].find(card => card.id.endsWith('-' + source.number));
-          const group = card?.closest<HTMLDetailsElement>('details.xj-chat-sources');
-          if (group) { group.open = true; await this.sourceLoaders.get(group)?.().catch(error => this.plugin.report(error)); const id = turn?.getAttribute('data-turn-id'); if (id) this.expandedSources.add(id); }
-          card?.scrollIntoView({ block: 'nearest' });
-          if (card) { card.classList.remove('is-highlighted'); void card.offsetWidth; card.classList.add('is-highlighted'); }
+        const link = fragment.createEl('a'); link.href = '#'; link.className = 'xj-evidence-link'; link.textContent = match[0];
+        link.addEventListener('click', event => {
+          void (async () => {
+            event.preventDefault();
+            const turn = link.closest('.xj-chat-turn');
+            const card = [...(turn?.querySelectorAll<HTMLElement>('.xj-chat-source') ?? [])].find(card => card.id.endsWith('-' + source.number));
+            const group = card?.closest<HTMLDetailsElement>('details.xj-chat-sources');
+            if (group) { group.open = true; await this.sourceLoaders.get(group)?.().catch(error => this.plugin.report(error)); const id = turn?.getAttribute('data-turn-id'); if (id) this.expandedSources.add(id); }
+            card?.scrollIntoView({ block: 'nearest' });
+            if (card) { card.classList.remove('is-highlighted'); void card.offsetWidth; card.classList.add('is-highlighted'); }
+          })().catch(error => this.plugin.report(error));
         });
-        fragment.append(link); offset = match.index! + match[0].length; changed = true;
+        fragment.append(link); offset = match.index + match[0].length; changed = true;
       }
       if (changed) { fragment.append(text.data.slice(offset)); text.replaceWith(fragment); }
     }
@@ -322,7 +325,7 @@ export class AskPanel extends Component {
     this.setLocked(true);
     let reading = false;
     let turn: ChatTurn | undefined, timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 120000);
+    const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, 120000);
     const signal = controller.signal;
     const bridge = (): void => undefined;
     try {
@@ -336,7 +339,7 @@ export class AskPanel extends Component {
       const chat = this.chat;
       const history = chat.turns.filter(turn => turn.status === 'complete').slice(-3).map(turn => 'Q: ' + turn.question + '\nA: ' + turn.answer).join('\n\n').slice(-6000);
       const messages: ChatMessage[] = chat.turns.filter(turn => turn.status === 'complete').slice(-6).flatMap(turn => [{ role: 'user' as const, content: turn.question.slice(0, 4000) }, { role: 'assistant' as const, content: turn.answer.slice(0, 8000) }]);
-      let id = timestamp(); while (chat.turns.some(turn => turn.id === id)) { await new Promise(resolve => setTimeout(resolve, 2)); id = timestamp(); }
+      let id = timestamp(); while (chat.turns.some(turn => turn.id === id)) { await sleep(2); id = timestamp(); }
       turn = { id, question, answer: '', sources: [], status: 'pending', createdAt: new Date().toISOString() };
       chat.turns.push(turn); await this.saveChat(chat);
       this.question.value = ''; this.keepInput();
@@ -346,10 +349,10 @@ export class AskPanel extends Component {
       if (!local && !direct) {
         const planController = new AbortController(), abortPlan = (): void => planController.abort();
         signal.addEventListener('abort', abortPlan, { once: true });
-        const planTimer = setTimeout(abortPlan, 20000);
+        const planTimer = window.setTimeout(abortPlan, 20000);
         try { plan = parsePlan(await complete(endpoint, key, buildPlan(question, p.prefs.aiModel, history), planController.signal, () => undefined, bridge)); }
         catch { signal.throwIfAborted(); }
-        finally { clearTimeout(planTimer); signal.removeEventListener('abort', abortPlan); }
+        finally { window.clearTimeout(planTimer); signal.removeEventListener('abort', abortPlan); }
       }
       signal.throwIfAborted();
       const useMemos = (mode !== 'off' && !direct && (mode === 'strict' || plan.route !== 'chat')) || Boolean(local);
@@ -367,7 +370,7 @@ export class AskPanel extends Component {
         turn.query = { action: q.action, total: candidates.length, shown: shown.length, scope };
         turn.answer = p.locale === 'zh' ? '共 **' + candidates.length + '** 条小记。' : '**' + candidates.length + '** memos.';
         if (q.action === 'list') {
-          turn.sources = shown.map((memo, index) => ({ number: index + 1, memo: JSON.parse(JSON.stringify(memo)), content: memo.body }));
+          turn.sources = shown.map((memo, index) => ({ number: index + 1, memo: structuredClone(memo), content: memo.body }));
           turn.answer += p.locale === 'zh' ? '\n\n下方展示最近 ' + shown.length + ' 条的完整原文。' : '\n\nShowing the full text of the most recent ' + shown.length + ' memos below.';
         }
         turn.status = 'complete';
@@ -407,7 +410,7 @@ export class AskPanel extends Component {
         if (message) this.showError(message); else this.status.textContent = '';
       }
     } finally {
-      clearTimeout(timer); this.controller = null;
+      window.clearTimeout(timer); this.controller = null;
       if (!this.disposed) { this.setLocked(false);
         for (const control of this.transcript.querySelectorAll<HTMLButtonElement>('[data-chat-mutate]')) control.disabled = false; }
     }
