@@ -2,6 +2,12 @@
 
 一个简洁、以本地 Markdown 为基础的 Obsidian 小记插件。当前版本：**0.16.0**。
 
+![](https://github.com/cimuyang/xiaoji/blob/main/%E5%AE%A3%E4%BC%A0/01-%E5%B0%8F%E8%AE%B0%E5%AE%A3%E4%BC%A0%E6%80%BB%E8%A7%88.png)
+
+![](https://github.com/cimuyang/xiaoji/blob/main/%E5%AE%A3%E4%BC%A0/02-%E8%AE%B0%E5%BD%95%E4%B8%8E%E6%B5%8F%E8%A7%88%E6%93%8D%E4%BD%9C.png)
+
+![](https://github.com/cimuyang/xiaoji/blob/main/%E5%AE%A3%E4%BC%A0/03-AI%E4%B8%8E%E6%96%87%E4%BB%B6%E7%AE%A1%E7%90%86.png)
+
 ## 功能
 
 - 顶部记录框与源码编辑，支持标签补全、待办、附件及自定义提交快捷键。
