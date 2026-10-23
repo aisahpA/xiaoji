@@ -4,9 +4,9 @@
 
 A quiet, local-first memo plugin for Obsidian. Keep ideas, everyday moments and tasks in your own Markdown files.
 
-![](宣传/宣传1.png)
+![](宣传/宣传1.PNG)
 
-![](宣传/宣传2.png)
+![](宣传/宣传2.PNG)
 
 ## 功能 · Features
 
