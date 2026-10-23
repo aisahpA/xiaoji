@@ -4,7 +4,9 @@
 
 A quiet, local-first memo plugin for Obsidian. Keep ideas, everyday moments and tasks in your own Markdown files.
 
-![小记宣传总览 / xiaoji overview](宣传/01-小记宣传总览.png)
+![](宣传/宣传1.png)
+
+![](宣传/宣传2.png)
 
 ## 功能 · Features
 
@@ -41,7 +43,7 @@ Requires **Obsidian 1.8.7+**. The standalone quick-capture window is desktop-onl
 - 点击 `@ID` 引用定位，Ctrl／⌘ 悬停预览；删除的小记可在插件回收站恢复。
   Click an `@ID` reference to locate its memo; Ctrl/⌘ + hover previews it. Restore deleted memos from the plugin Trash.
 
-![记录与浏览操作 / Capture and browsing guide](宣传/02-记录与浏览操作.png)
+![](宣传/宣传.svg)
 
 ## AI 与文件 · AI & files
 
@@ -54,7 +56,6 @@ Requires **Obsidian 1.8.7+**. The standalone quick-capture window is desktop-onl
 - 可按月／季／年分卷，自定义文件名与日期标题。整理历史格式会先预览并备份，不自动重命名或重新分卷；迁移提示词只复制，不自动上传旧笔记。
   Choose monthly, quarterly or yearly files and custom names/headings. Reformatting previews and backs up existing notes without renaming or repartitioning them. Migration prompts are copied; old notes are not uploaded automatically.
 
-![AI 与文件管理 / AI and file management guide](宣传/03-AI与文件管理.png)
 
 ## 开发 · Development
 
