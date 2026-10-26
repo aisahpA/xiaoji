@@ -331,6 +331,11 @@ export class XiaojiSettings extends PluginSettingTab {
     this.shortcutSetting(panel, 'submitKey'); this.shortcutSetting(panel, 'newlineKey');
     new Setting(panel).setName(p.t('quickCapture')).setDesc(p.t('quickShortcutHint')).addButton(control => control.setButtonText(p.t('configureHotkeys')).onClick(() => p.openHotkeys()));
     new Setting(panel).setName(p.t('quickPin')).addToggle(control => control.setValue(p.prefs.quickPin).onChange(value => this.change({ quickPin: value })));
+    new Setting(panel).setName(p.t('quickHotkey')).setDesc(p.t('quickHotkeyHint')).addText(text => {
+      const input = text.inputEl;
+      text.setPlaceholder('CommandOrControl+Shift+J').setValue(p.prefs.quickHotkey);
+      this.autoText(input, async value => { await p.updateSettings({ quickHotkey: value.trim() }); });
+    });
     new Setting(panel).setName(p.t('language')).addDropdown(dropdown =>
       dropdown.addOption('auto', p.t('auto')).addOption('zh', '简体中文').addOption('en', 'English')
         .setValue(p.prefs.language).onChange(value => this.change({ language: value as Settings['language'] }, true)));

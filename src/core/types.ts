@@ -36,6 +36,8 @@ export interface Settings {
   submitKey: string;
   newlineKey: string;
   quickPin: boolean;
+  /** Electron accelerator for the system-wide quick capture shortcut; empty disables it. */
+  quickHotkey: string;
   chatFolder: string;
   chatFolders?: string[];
   language: Language;

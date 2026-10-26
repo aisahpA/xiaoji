@@ -979,7 +979,25 @@ export class QuickView extends ItemView {
       else {
         const bounds = this.plugin.watchQuickBounds(this.leaf);
         const chrome = compactQuickWindow(doc, this.plugin.quickWindowControls(this.leaf));
-        this.windowCleanup = () => { bounds(); chrome(); };
+        // Cmd+W in this dedicated window hides the reusable popout instead of tearing down
+        // the leaf, which would force a fresh window on the next capture.
+        const onKey = (event: KeyboardEvent): void => {
+          if (event.isComposing) return;
+          const key = event.key.toLowerCase();
+          if (key === 'w' && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) {
+            event.preventDefault(); event.stopPropagation();
+            this.plugin.quickWindowAction(this.leaf, 'close');
+            return;
+          }
+          if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+            // Let CodeMirror close its completion popup first; only hide the window otherwise.
+            if (this.editor?.hasOpenCompletion()) return;
+            event.preventDefault(); event.stopPropagation();
+            this.plugin.quickWindowAction(this.leaf, 'close');
+          }
+        };
+        doc.addEventListener('keydown', onKey, true);
+        this.windowCleanup = () => { bounds(); chrome(); doc.removeEventListener('keydown', onKey, true); };
       }
       if (doc !== mainDocument && this.plugin.prefs.quickPin && this.plugin.windowPinState(this.leaf) !== true) this.plugin.toggleWindowPin(this.leaf);
     }
@@ -987,19 +1005,12 @@ export class QuickView extends ItemView {
       const position = this.editor.view.state.selection.main.head; this.editor.unload(); this.editor = null;
       const editor = this.build(); editor.moveCursor(position);
     }
-    const maximize = this.contentEl.querySelector<HTMLButtonElement>('.xj-quick-window-actions button:nth-child(2)');
-    if (maximize) {
-      const active = this.plugin.quickWindowMaximized(this.leaf);
-      if (maximize.getAttribute('aria-pressed') !== String(active)) setIcon(maximize, active ? 'copy' : 'square');
-      maximize.setAttribute('aria-pressed', String(active));
-    }
   }
   onResize(): void { this.syncWindow(); }
   private build(): MemoEditor {
     const p = this.plugin; this.locale = p.locale; this.editorDocument = this.contentEl.ownerDocument; empty(this.contentEl);
     const root = element(this.contentEl, 'div', 'xj-quick');
     const top = element(root, 'header', 'xj-quick-toolbar');
-    top.addEventListener('dblclick', event => { if (!(event.target as Element).closest('button')) p.quickWindowAction(this.leaf, 'maximize'); });
     const pin = button(top, p.t('windowPin'), () => {
       const state = p.toggleWindowPin(this.leaf);
       pin.classList.toggle('is-active', state === true);
@@ -1010,10 +1021,6 @@ export class QuickView extends ItemView {
     pin.setAttribute('aria-pressed', String(p.windowPinState(this.leaf) === true));
     element(top, 'span', 'xj-quick-drag');
     const controls = element(top, 'div', 'xj-quick-window-actions');
-    const minimize = button(controls, p.t('windowMinimize'), () => p.quickWindowAction(this.leaf, 'minimize'), 'minus');
-    const maximize = button(controls, p.t('windowMaximize'), () => p.quickWindowAction(this.leaf, 'maximize'), p.quickWindowMaximized(this.leaf) ? 'copy' : 'square');
-    minimize.disabled = maximize.disabled = !p.quickWindowControls(this.leaf);
-    maximize.setAttribute('aria-pressed', String(p.quickWindowMaximized(this.leaf)));
     button(controls, p.t('close'), () => p.quickWindowAction(this.leaf, 'close'), 'x', 'xj-window-close');
     const draft = p.data.drafts[this.key];
     this.sourcePath = draft?.sourcePath ?? p.sourcePath();
@@ -1033,9 +1040,27 @@ export class QuickView extends ItemView {
     this.editor.focus(); return this.editor;
   }
   focusEditor(): void {
-    this.syncWindow(); this.editor?.focus();
-    const pin = this.contentEl.querySelector<HTMLButtonElement>('.xj-quick-toolbar button[aria-pressed]');
-    if (pin) { const active = this.plugin.windowPinState(this.leaf) === true; pin.classList.toggle('is-active', active); pin.setAttribute('aria-pressed', String(active)); }
+    this.syncWindow();
+    const doc = this.contentEl.ownerDocument;
+    const commit = (): void => {
+      if (this.closed || !this.editor) return;
+      this.editor.focus();
+      // Resume typing at the end of the draft instead of at the first character.
+      this.editor.moveCursor(this.editor.view.state.doc.length);
+      const pin = this.contentEl.querySelector<HTMLButtonElement>('.xj-quick-toolbar button[aria-pressed]');
+      if (pin) { const active = this.plugin.windowPinState(this.leaf) === true; pin.classList.toggle('is-active', active); pin.setAttribute('aria-pressed', String(active)); }
+    };
+    commit();
+    // While the popout is still becoming the key window macOS can hand focus to the first
+    // focusable element (the toolbar pin button). Keep nudging the caret into the editor.
+    let attempts = 0;
+    const retry = (): void => {
+      if (this.closed || !this.editor || attempts >= 6) return;
+      if (doc.activeElement !== this.editor.view.contentDOM) commit();
+      attempts += 1;
+      if (attempts < 6) doc.defaultView?.setTimeout(retry, 60);
+    };
+    doc.defaultView?.setTimeout(retry, 60);
   }
   private async save(): Promise<void> {
     if (!this.editor || this.busy) return;
@@ -1048,6 +1073,7 @@ export class QuickView extends ItemView {
       else if (this.plugin.data.drafts[this.key] === draft) await this.plugin.clearDraft(this.key).catch(error => this.plugin.report(error));
       await this.plugin.refresh();
       new Notice(this.plugin.t('savedMemo'));
+      if (this.contentEl.ownerDocument !== (this.app.workspace.containerEl?.ownerDocument ?? document)) this.plugin.quickWindowAction(this.leaf, 'close');
     } catch (error) { this.plugin.report(error); }
     finally { this.busy = false; this.editor?.setBusy(false); this.syncWindow(); this.editor?.focus(); }
   }

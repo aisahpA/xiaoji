@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS: Settings = {
   submitKey: 'Shift-Enter',
   newlineKey: 'Enter',
   quickPin: true,
+  quickHotkey: 'CommandOrControl+Shift+J',
   chatFolder: '小记对话',
   language: 'auto',
   folder: '小记',
@@ -94,6 +95,15 @@ const bool = (value: unknown, fallback: boolean): boolean => typeof value === 'b
 const number = (value: unknown, min: number, max: number, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? Math.round(Math.min(max, Math.max(min, value))) : fallback;
 
+/** Electron accelerator for the system-wide quick capture shortcut; empty disables it. */
+const ACCELERATOR = /^(?:(?:CommandOrControl|Command|Control|Ctrl|Alt|Option|AltGr|Shift|Super|Meta)\+)*(?:[A-Za-z0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Space|Tab|Enter|Escape|Backspace|Delete|Up|Down|Left|Right|Home|End|PageUp|PageDown|Plus|Comma|Period|Minus|Slash|Semicolon|Quote|BracketLeft|BracketRight|Backslash|Backquote|CapsLock|PrintScreen|Insert)$/;
+const accelerator = (value: unknown, fallback: string): string => {
+  if (typeof value !== 'string') return fallback;
+  const raw = value.trim();
+  if (!raw) return '';
+  return ACCELERATOR.test(raw) ? raw : fallback;
+};
+
 const orderIds = (value: unknown, nav: NavItem[]): string[] => {
   const ids = nav.map(item => item.id);
   const order = Array.isArray(value) ? [...new Set(value.filter((id): id is string => typeof id === 'string' && ids.includes(id)))] : [];
@@ -133,6 +143,7 @@ export function loadSettings(value: unknown): Settings {
   return {
     ...normalizeInputKeys(data.submitKey, data.newlineKey),
     quickPin: bool(data.quickPin, true),
+    quickHotkey: accelerator(data.quickHotkey, defaults.quickHotkey),
     chatFolder,
     chatFolders: [...new Set([...(Array.isArray(data.chatFolders) ? data.chatFolders.filter((v): v is string => typeof v === 'string') : []), chatFolder])],
     language: oneOf(data.language, ['auto', 'zh', 'en'] as const, defaults.language),

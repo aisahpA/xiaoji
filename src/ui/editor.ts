@@ -180,6 +180,7 @@ export class MemoEditor extends Component {
     return null;
   }
 
+  hasOpenCompletion(): boolean { return completionStatus(this.view.state) === 'active'; }
   getValue(): string { return this.view.state.doc.toString(); }
   setSourcePath(path: string): void { this.options.sourcePath = path; }
   setValue(value: string): void {

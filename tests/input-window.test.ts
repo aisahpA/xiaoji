@@ -36,6 +36,11 @@ describe('quick window placement', () => {
     expect(quickBounds({ x: 1800, y: 950, width: 500, height: 400 }, [primary])).toEqual({ x: 1420, y: 640, width: 500, height: 400 });
     expect(quickBounds({ width: 900, height: 900 }, [{ x: 0, y: 0, width: 320, height: 240 }])).toEqual({ x: 0, y: 0, width: 320, height: 240 });
   });
+  it('ignores geometry left behind by a maximized or full-screen window', () => {
+    expect(quickBounds({ x: 0, y: 25, width: 1440, height: 900 }, [primary])).toEqual({ x: 760, y: 340, width: 400, height: 360 });
+    expect(quickBounds({ width: 1000, height: 790 }, [primary])).toEqual({ x: 760, y: 340, width: 400, height: 360 });
+  });
+  it('keeps a compact saved size and position', () => expect(quickBounds({ x: 120, y: 80, width: 480, height: 400 }, [primary])).toEqual({ x: 120, y: 80, width: 480, height: 400 }));
   it('rejects nonfinite stored geometry and broken work areas', () => {
     const bounds = quickBounds({ x: NaN, y: Infinity, width: NaN, height: -1 }, [{ x: 0, y: 0, width: NaN, height: 10 }, primary]);
     expect(Object.values(bounds).every(Number.isFinite)).toBe(true); expect(bounds.width).toBe(400); expect(bounds.height).toBe(280);

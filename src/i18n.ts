@@ -55,6 +55,10 @@ const strings = {
   queryFailed: ['无法完整读取小记，已取消本次查询，避免给出不准确的统计。', 'Could not read all memos. Query cancelled to avoid inaccurate statistics.'],
 
   submitKey: ['提交快捷键', 'Submit shortcut'], quickPin: ['快速记录窗口默认置顶', 'Pin quick capture by default'],
+  quickHotkey: ['全局快捷键', 'Global hotkey'],
+  quickHotkeyHint: ['系统级快捷键，Obsidian 在后台时也能唤起快速记录。留空关闭。示例：CommandOrControl+Shift+J', 'System-wide shortcut that also works while Obsidian is in the background. Leave empty to disable. Example: CommandOrControl+Shift+J'],
+  quickHotkeyBusy: ['这个快捷键已被其他应用占用，请换一个。', 'That shortcut is already used by another app. Choose a different one.'],
+  quickHotkeyInvalid: ['快捷键格式无效，示例：CommandOrControl+Shift+J', 'Invalid shortcut format. Example: CommandOrControl+Shift+J'],
   addTask: ['添加待办', 'Add task'], citeMemo: ['引用', 'Insert reference'], undoDelete: ['撤销', 'Undo'],
   chatHistory: ['历史对话', 'Conversations'], newChat: ['新对话', 'New conversation'],
   deleteChat: ['删除对话', 'Delete conversation'], deleteTurn: ['删除本轮', 'Delete this turn'],

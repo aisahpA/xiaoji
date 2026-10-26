@@ -20,7 +20,11 @@ import { ReferencePreview } from './ui/references';
 interface QuickNativeWindow {
   isAlwaysOnTop(): boolean; setAlwaysOnTop(value: boolean): void;
   getBounds?(): WindowBounds; setBounds?(bounds: WindowBounds): void; isMinimized?(): boolean; isMaximized?(): boolean;
-  restore?(): void; show?(): void; focus?(): void; minimize?(): void; maximize?(): void; unmaximize?(): void;
+  isFullScreen?(): boolean; setFullScreen?(value: boolean): void; isSimpleFullScreen?(): boolean; setSimpleFullScreen?(value: boolean): void;
+  isFullScreenable?(): boolean; setFullScreenable?(value: boolean): void; setMaximizable?(value: boolean): void; setMinimizable?(value: boolean): void;
+  setWindowButtonVisibility?(visible: boolean): void;
+  setVisibleOnAllWorkspaces?(visible: boolean, options?: { visibleOnFullScreen?: boolean; skipTransformProcessType?: boolean }): void;
+  restore?(): void; hide?(): void; show?(): void; focus?(): void; minimize?(): void; maximize?(): void; unmaximize?(): void;
   on?(event: string, callback: () => void): void;
   removeListener?(event: string, callback: () => void): void;
 }
@@ -89,6 +93,7 @@ export default class XiaojiPlugin extends Plugin {
   private tagCache: string[] | null = null;
   private stopped = false;
   private openingQuick: Promise<void> | null = null;
+  private quickHotkeyRegistered: string | null = null;
   loading = true;
   readError = false;
 
@@ -165,11 +170,12 @@ export default class XiaojiPlugin extends Plugin {
     this.registerEvent(this.app.vault.on('create', changed));
     this.registerEvent(this.app.vault.on('delete', changed));
     this.registerEvent(this.app.vault.on('rename', changed));
-    this.app.workspace.onLayoutReady(() => { void this.refresh().catch(error => this.report(error)); });
+    this.app.workspace.onLayoutReady(() => { this.setupQuickHotkey(); void this.refresh().catch(error => this.report(error)); });
   }
 
   onunload(): void {
     this.stopped = true;
+    this.clearQuickHotkey();
     if (this.refreshTimer) window.clearTimeout(this.refreshTimer);
     this.subscribers.clear();
     this.sessionApiKey = '';
@@ -208,6 +214,7 @@ export default class XiaojiPlugin extends Plugin {
     this.data.settings = next;
     try { await this.persist(); }
     catch (error) { this.data.settings = previous; throw error; }
+    if (next.quickHotkey !== previous.quickHotkey) this.setupQuickHotkey();
     this.tagCache = null;
     if (next.folder !== previous.folder || next.chatFolder !== previous.chatFolder) await this.refresh();
     else this.notify();
@@ -314,8 +321,13 @@ export default class XiaojiPlugin extends Plugin {
   }
   quickWindowMaximized(leaf: WorkspaceLeaf): boolean { try { return this.nativeWindow(leaf)?.isMaximized?.() ?? false; } catch { return false; } }
   quickWindowAction(leaf: WorkspaceLeaf, action: 'minimize' | 'maximize' | 'close'): void {
-    if (action === 'close') { leaf.detach(); return; }
     const native = this.nativeWindow(leaf);
+    if (action === 'close') {
+      // Keep the popout alive and only hide it: the next open reuses this window instead of
+      // paying for a fresh create + flash cycle on every capture.
+      try { if (native?.hide) { native.hide(); return; } } catch { /* Fall back to detaching the leaf. */ }
+      leaf.detach(); return;
+    }
     try {
       if (action === 'minimize' && native?.minimize) { native.minimize(); return; }
       if (action === 'maximize' && native?.maximize && native.unmaximize) {
@@ -323,6 +335,37 @@ export default class XiaojiPlugin extends Plugin {
       }
     } catch { /* Keep native window chrome available if the bridge is unavailable. */ }
     new Notice(this.t('windowUnavailable'));
+  }
+  private quickShortcutApi(): { register(accelerator: string, callback: () => void): boolean; unregister(accelerator: string): void } | null {
+    try {
+      const remote = (window as Window & { require?: (id: string) => unknown }).require?.('@electron/remote') as {
+        globalShortcut?: { register(accelerator: string, callback: () => void): boolean; unregister(accelerator: string): void };
+      } | undefined;
+      return remote?.globalShortcut ?? null;
+    } catch { return null; }
+  }
+  private clearQuickHotkey(): void {
+    const registered = this.quickHotkeyRegistered;
+    this.quickHotkeyRegistered = null;
+    if (!registered) return;
+    try { this.quickShortcutApi()?.unregister(registered); } catch { /* The shortcut bridge may already be gone. */ }
+  }
+  private setupQuickHotkey(): void {
+    this.clearQuickHotkey();
+    if (Platform.isMobile) return;
+    const hotkey = this.prefs.quickHotkey.trim();
+    if (!hotkey) return;
+    const shortcut = this.quickShortcutApi();
+    if (!shortcut) return;
+    try {
+      // Obsidian keeps its Electron main process alive when the last window closes, so a
+      // shortcut registered by the previous renderer can outlive it. register() would then fail
+      // with "already in use" even though the binding is ours. Reclaiming the accelerator first
+      // clears that stale entry; other applications are unaffected by unregister().
+      try { shortcut.unregister(hotkey); } catch { /* Nothing was registered for this accelerator. */ }
+      if (shortcut.register(hotkey, () => { void this.openQuick().catch(error => this.report(error)); })) { this.quickHotkeyRegistered = hotkey; return; }
+      new Notice(this.t('quickHotkeyBusy'), 8000);
+    } catch { new Notice(this.t('quickHotkeyInvalid'), 8000); }
   }
   async openQuick(): Promise<void> {
     if (Platform.isMobile) { await this.openView().then(view => view.focusComposer()); return; }
@@ -336,26 +379,42 @@ export default class XiaojiPlugin extends Plugin {
       await this.app.workspace.revealLeaf(existing);
       const native = this.nativeWindow(existing);
       if (native?.isMinimized?.()) native.restore?.();
+      // Leave full screen before touching window capabilities: setFullScreenable(false)
+      // while still full screen would trap the window on the full-screen Space.
+      if (this.exitQuickFullScreen(native)) {
+        // A quick window that was full-screened earlier must come back as a compact panel.
+        this.restoreQuickBounds(native, quickBounds(this.app.loadLocalStorage('xiaoji-quick-size'), this.quickWorkAreas()));
+      }
+      this.configureQuickWindow(native);
       native?.show?.(); native?.focus?.();
       existing.view.containerEl.ownerDocument.defaultView?.focus();
       (existing.view as QuickView).focusEditor(); return;
     }
-    let areas: WindowBounds[] = [];
-    try {
-      const remote = (window as Window & { require?: (id: string) => unknown }).require?.('@electron/remote') as {
-        screen?: { getAllDisplays(): { workArea: WindowBounds }[]; getPrimaryDisplay(): { workArea: WindowBounds } };
-      } | undefined;
-      if (remote?.screen) areas = [remote.screen.getPrimaryDisplay().workArea, ...remote.screen.getAllDisplays().map(display => display.workArea)];
-    } catch { /* Use the current screen if no native screen bridge is available. */ }
-    if (!areas.length) {
-      const screen = window.screen as Screen & { availLeft?: number; availTop?: number };
-      areas = [{ x: screen.availLeft ?? 0, y: screen.availTop ?? 0, width: screen.availWidth || 1200, height: screen.availHeight || 800 }];
-    }
+    const areas = this.quickWorkAreas();
     const bounds = quickBounds(this.app.loadLocalStorage('xiaoji-quick-size'), areas);
     const leaf = this.app.workspace.openPopoutLeaf({ x: bounds.x, y: bounds.y, size: { width: bounds.width, height: bounds.height } });
+    // The popout is created with the host window geometry and is already visible before the
+    // view finishes loading; from a full-screen Space it can even arrive full screen. Leave
+    // full screen and re-apply the compact bounds right away so the first visible frame is
+    // the small window instead of a full-screen flash.
+    const early = this.nativeWindow(leaf);
+    const earlyExited = early ? this.exitQuickFullScreen(early) : false;
+    if (early?.setBounds) early.setBounds(bounds);
+    else window.setTimeout(() => {
+      // Right after openPopoutLeaf() the leaf can still be mounted in the host document, so
+      // the native window is not addressable yet. Retry on the next task, before the popout
+      // paints its first frame, instead of waiting for the full view switch below.
+      const late = this.nativeWindow(leaf);
+      if (!late?.setBounds) return;
+      this.exitQuickFullScreen(late);
+      late.setBounds(bounds);
+    }, 0);
     await leaf.setViewState({ type: QUICK_TYPE, active: true });
-    const native = this.nativeWindow(leaf);
+    const native = this.nativeWindow(leaf) ?? early;
     if (native?.setBounds) {
+      // A popout opened from a full-screen Space can arrive already full screen; leave it
+      // before sizing and only then lock down the window capabilities.
+      const exitedFullScreen = this.exitQuickFullScreen(native) || earlyExited;
       native.setBounds(bounds);
       const actual = native.getBounds?.();
       if (actual) {
@@ -368,7 +427,11 @@ export default class XiaojiPlugin extends Plugin {
         }
         if (changed) native.setBounds(corrected);
       }
+      // macOS animates the native full-screen transition; re-apply the compact bounds once
+      // the window is back on a regular space so the restore cannot land at screen size.
+      if (exitedFullScreen) this.restoreQuickBounds(native, bounds);
     }
+    this.configureQuickWindow(native);
     if (native && this.prefs.quickPin && this.windowPinState(leaf) !== true) this.toggleWindowPin(leaf);
     (leaf.view as QuickView).focusEditor();
   }
@@ -378,6 +441,8 @@ export default class XiaojiPlugin extends Plugin {
     const save = (): void => {
       try {
         if (native?.isMinimized?.() || native?.isMaximized?.()) return;
+        // Never persist a full-screen frame: only compact geometry may come back next time.
+        if (native?.isFullScreen?.() || native?.isSimpleFullScreen?.()) return;
         const bounds = native?.getBounds?.() ?? (win ? { x: win.screenX, y: win.screenY, width: win.outerWidth, height: win.outerHeight } : null);
         if (bounds && Object.values(bounds).every(Number.isFinite) && bounds.width > 0 && bounds.height > 0) this.app.saveLocalStorage('xiaoji-quick-size', bounds);
       } catch { /* A closing native window may already be destroyed. */ }
@@ -391,11 +456,77 @@ export default class XiaojiPlugin extends Plugin {
     };
   }
 
+  /** Work areas of every display, used to confine and center the quick window. */
+  private quickWorkAreas(): WindowBounds[] {
+    let areas: WindowBounds[] = [];
+    try {
+      const remote = (window as Window & { require?: (id: string) => unknown }).require?.('@electron/remote') as {
+        screen?: { getAllDisplays(): { workArea: WindowBounds }[]; getPrimaryDisplay(): { workArea: WindowBounds } };
+      } | undefined;
+      if (remote?.screen) areas = [remote.screen.getPrimaryDisplay().workArea, ...remote.screen.getAllDisplays().map(display => display.workArea)];
+    } catch { /* Use the current screen if no native screen bridge is available. */ }
+    if (areas.length) return areas;
+    const screen = window.screen as Screen & { availLeft?: number; availTop?: number };
+    return [{ x: screen.availLeft ?? 0, y: screen.availTop ?? 0, width: screen.availWidth || 1200, height: screen.availHeight || 800 }];
+  }
+
+  /** Keep the quick window a plain floating panel: no native traffic lights, no full screen, visible on every Space. */
+  private configureQuickWindow(native: QuickNativeWindow | null): void {
+    if (!native) return;
+    try { native.setMaximizable?.(false); } catch { /* Older Electron builds may not expose this control. */ }
+    try { native.setMinimizable?.(false); } catch { /* Older Electron builds may not expose this control. */ }
+    try { native.setWindowButtonVisibility?.(false); } catch { /* Older Electron builds may not expose this control. */ }
+    try { native.setVisibleOnAllWorkspaces?.(true, { visibleOnFullScreen: true, skipTransformProcessType: true }); } catch { /* Older Electron builds may not expose this control. */ }
+    // Last: a window that is still full screen cannot leave once it stops being full-screenable.
+    if (!native.isFullScreen?.() && !native.isSimpleFullScreen?.()) {
+      try { native.setFullScreenable?.(false); } catch { /* Older Electron builds may not expose this control. */ }
+    }
+  }
+
+  /** Re-apply compact bounds after a native full-screen transition finishes animating. */
+  private restoreQuickBounds(native: QuickNativeWindow | null, bounds: WindowBounds): void {
+    const apply = (): void => { try { native?.setBounds?.(bounds); } catch { /* Window already closed. */ } };
+    apply();
+    // The macOS full-screen exit animation runs for several hundred milliseconds and ends by
+    // restoring the pre-full-screen frame, which would otherwise snap the window back to
+    // screen size. Re-apply both on a timer and when the window reports the transition done.
+    window.setTimeout(apply, 350);
+    window.setTimeout(apply, 900);
+    window.setTimeout(apply, 1600);
+    try {
+      const onLeave = (): void => {
+        window.setTimeout(apply, 80);
+        try { native?.removeListener?.('leave-full-screen', onLeave); } catch { /* Window already closed. */ }
+      };
+      native?.on?.('leave-full-screen', onLeave);
+    } catch { /* Older Electron bridges may not expose full-screen events. */ }
+  }
+
+  /** Leave native full screen before positioning the quick window. */
+  private exitQuickFullScreen(native: QuickNativeWindow | null): boolean {
+    let exited = false;
+    try {
+      if (native?.isFullScreen?.()) {
+        // A window created inside a full-screen Space can arrive already full screen. If an
+        // earlier configuration pass disabled full-screenability, re-enable it so the exit works.
+        if (native.isFullScreenable?.() === false) native.setFullScreenable?.(true);
+        native.setFullScreen?.(false); exited = true;
+      }
+      if (native?.isSimpleFullScreen?.()) { native.setSimpleFullScreen?.(false); exited = true; }
+    } catch { /* Older Electron bridges may not expose full-screen controls. */ }
+    return exited;
+  }
+
   private nativeWindow(leaf: WorkspaceLeaf): QuickNativeWindow | null {
     if (Platform.isMobile) return null;
+    const hostDoc = this.app.workspace.containerEl?.ownerDocument ?? document;
     const doc = leaf.view.containerEl.ownerDocument;
-    if (leaf.view.getViewType?.() === QUICK_TYPE && doc === (this.app.workspace.containerEl?.ownerDocument ?? document)) return null;
-    const target = leaf.view.containerEl.ownerDocument.defaultView as (Window & { require?: (name: string) => unknown }) | null;
+    // A leaf whose view is still mounted in the host document has no independent native
+    // window: this covers a quick view shown in the main window and the short moment right
+    // after openPopoutLeaf() before the popout page takes ownership of the leaf. Treating
+    // the host window as the quick window here would resize the whole Obsidian window.
+    if (doc === hostDoc) return null;
+    const target = doc.defaultView as (Window & { require?: (name: string) => unknown }) | null;
     try {
       const remote = target?.require?.('@electron/remote') as { getCurrentWindow?: () => QuickNativeWindow } | undefined;
       return remote?.getCurrentWindow?.() ?? null;
