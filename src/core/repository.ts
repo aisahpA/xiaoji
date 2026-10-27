@@ -26,9 +26,8 @@ export class Repository {
   ) { this.files = files; }
   private readonly files: FilePort;
 
-  invalidate(path?: string): void {
-    if (path === undefined) this.cache.clear();
-    else this.cache.delete(path);
+  invalidate(path: string): void {
+    this.cache.delete(path);
   }
 
   /** Discard the in-memory trash snapshot after an external store change. */
