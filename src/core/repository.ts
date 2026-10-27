@@ -229,7 +229,6 @@ export class Repository {
   delete(snapshot: Memo): Promise<TrashEntry> {
     return this.enqueue(async () => {
       findUnchanged(await this.files.read(snapshot.path), snapshot);
-      const root = trashRoot(this.settings());
       const deletedAt = this.clock();
       let name = snapshot.id + '-' + timestamp(deletedAt) + '.md';
       let suffix = 1;
@@ -248,12 +247,11 @@ export class Repository {
       let state: TrashStoreEntry['state'] = 'backup';
       try { await this.trash.update(name, e => ({ ...e, state: 'deleted' })); state = 'deleted'; }
       catch { /* The readable backup remains recoverable even if its status update failed. */ }
-      return { path: root + name, source: snapshot.path, deletedAt: entry.deletedAt, state, memo: snapshot };
+      return { path: name, source: snapshot.path, deletedAt: entry.deletedAt, state, memo: snapshot };
     });
   }
 
   async listTrash(): Promise<{ entries: TrashEntry[]; damaged: string[] }> {
-    const root = trashRoot(this.settings());
     const storeEntries = await this.trash.list();
     const entries: TrashEntry[] = [];
     const damaged: string[] = [];
@@ -261,17 +259,15 @@ export class Repository {
       try {
         const memos = parseMemos(e.raw, e.source);
         if (memos.length !== 1 || !memos[0]) throw new MemoError('invalidTrash');
-        entries.push({ path: root + e.name, source: e.source, deletedAt: e.deletedAt, state: e.state, memo: memos[0] });
-      } catch { damaged.push(root + e.name); }
+        entries.push({ path: e.name, source: e.source, deletedAt: e.deletedAt, state: e.state, memo: memos[0] });
+      } catch { damaged.push(e.name); }
     }
     return { entries: entries.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt)), damaged };
   }
 
   purgeTrash(snapshot: TrashEntry): Promise<void> {
     return this.enqueue(async () => {
-      const root = trashRoot(this.settings());
-      if (!snapshot.path.startsWith(root)) throw new MemoError('invalidTrash');
-      const name = snapshot.path.slice(root.length);
+      const name = snapshot.path;
       const entry = await this.trash.get(name);
       if (!entry) throw new MemoError('invalidTrash');
       if (entry.raw !== snapshot.memo.raw || entry.source !== snapshot.source || entry.deletedAt !== snapshot.deletedAt) throw new MemoError('conflict');
@@ -281,9 +277,7 @@ export class Repository {
 
   restore(snapshot: TrashEntry): Promise<Memo> {
     return this.enqueue(async () => {
-      const root = trashRoot(this.settings());
-      if (!snapshot.path.startsWith(root)) throw new MemoError('invalidTrash');
-      const name = snapshot.path.slice(root.length);
+      const name = snapshot.path;
       const entry = await this.trash.get(name);
       if (!entry) throw new MemoError('invalidTrash');
       if (entry.raw !== snapshot.memo.raw || entry.source !== snapshot.source) throw new MemoError('conflict');
