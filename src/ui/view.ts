@@ -101,6 +101,7 @@ export class MemoView extends ItemView {
   private composerLocale = '';
   private automaticTag = '';
   private restoreScroll = 0;
+  private pendingTopScroll = false;
   private positions = new Map<string, { scroll: number; limit: number }>();
   private completedFeedback = new Map<string, { memo: Memo; scope: string; timer: number }>();
   private feedSignature = '';
@@ -328,6 +329,15 @@ export class MemoView extends ItemView {
     this.focusComposer();
   }
   focusComposer(): void { this.scroller.scrollTop = 0; this.composer?.focus(); }
+  /** Request the feed to jump to the top on its next render — but only when the
+   *  view is already near the top (within one folded card). A user browsing
+   *  further down keeps their position (the saved-memo notice already confirms
+   *  the capture), while a user near the top sees the freshly added memo. */
+  requestTopScroll(): void {
+    if (!this.scroller) { this.pendingTopScroll = true; return; }
+    const threshold = densityValues(this.plugin.prefs).foldHeight;
+    if (this.scroller.scrollTop < threshold) this.pendingTopScroll = true;
+  }
   private applyTag(): void {
     if (!this.composer || this.editing) return;
     const value = this.composer.getValue();
@@ -362,7 +372,7 @@ export class MemoView extends ItemView {
       this.buildComposer();
     }
     if (['ask', 'trash'].includes(this.currentId)) this.navigate('all');
-    this.focusComposer();
+    this.composer?.focus(); this.composer?.moveCursor(this.composer.getValue().length);
   }
   private async cancelEdit(): Promise<void> {
     if (this.saving) return;
@@ -386,7 +396,7 @@ export class MemoView extends ItemView {
       if (editing) {
         this.scroller.scrollTop = this.editReturnScroll;
         const card = this.cards.get(memo.key); card?.el.classList.add('is-revealed');
-      } else this.scroller.scrollTop = 0;
+      } else this.requestTopScroll();
       new Notice(p.t('savedMemo'));
     } catch (error) { p.report(error); }
     finally { this.saving = false; this.composer?.setBusy(false); }
@@ -767,7 +777,9 @@ export class MemoView extends ItemView {
     this.sentinel.hidden = this.limit >= this.filtered.length;
     empty(this.sentinel);
     if (!this.sentinel.hidden) button(this.sentinel, p.t('loadMore'), () => { this.limit += 40; this.renderFeed(); }, undefined, 'xj-text-button');
-    if (this.restoreScroll > 0) {
+    if (this.pendingTopScroll) {
+      this.scroller.scrollTop = 0; this.pendingTopScroll = false;
+    } else if (this.restoreScroll > 0) {
       this.scroller.scrollTop = this.restoreScroll; this.restoreScroll = 0;
     } else {
       const anchor = anchors.find(item => this.cards.has(item.key));
@@ -1115,6 +1127,7 @@ export class QuickView extends ItemView {
     try {
       await editor.waitForAttachments(); if (this.editor !== editor || this.closed) return;
       await this.plugin.createMemo(editor.getValue(), this.sourcePath);
+      (this.app.workspace.getLeavesOfType?.(VIEW_TYPE) ?? []).forEach(leaf => (leaf.view as MemoView).requestTopScroll());
       if (this.editor === editor) { editor.setValue(''); await this.plugin.clearDraft(this.key).catch(error => this.plugin.report(error)); }
       else if (this.plugin.data.drafts[this.key] === draft) await this.plugin.clearDraft(this.key).catch(error => this.plugin.report(error));
       await this.plugin.refresh();
