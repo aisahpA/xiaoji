@@ -18,6 +18,10 @@ class MemoryFiles implements FilePort {
   failProcess: string | null = null;
   failCreate = false;
   failRemove = false;
+  revision(path: string): string | number | undefined {
+    const text = this.data.get(path);
+    return text === undefined ? undefined : text;
+  }
   async listMarkdown(): Promise<string[]> { return [...this.data.keys()].filter(path => path.endsWith('.md')); }
   async read(path: string): Promise<string> {
     if (!this.data.has(path)) throw Error('missing');

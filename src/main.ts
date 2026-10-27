@@ -32,8 +32,9 @@ interface QuickNativeWindow {
 
 export class VaultFiles implements FilePort {
   constructor(private readonly app: App) {}
-  revision(path: string): string {
-    const file = this.file(path);
+  revision(path: string): string | number | undefined {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return undefined;
     return file.stat.mtime + ':' + file.stat.size;
   }
   async listMarkdown(): Promise<string[]> { return this.app.vault.getMarkdownFiles().map(file => file.path); }

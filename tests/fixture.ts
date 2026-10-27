@@ -11,6 +11,10 @@ import type { Draft, FilePort, Settings } from '../src/core/types';
 
 export class FixtureFiles implements FilePort {
   data = new Map<string, string>();
+  revision(path: string): string | number | undefined {
+    const text = this.data.get(path);
+    return text === undefined ? undefined : text;
+  }
   async listMarkdown(): Promise<string[]> { return [...this.data.keys()]; }
   async read(path: string): Promise<string> { if (!this.data.has(path)) throw Error('Missing file'); return this.data.get(path)!; }
   async exists(path: string): Promise<boolean> { return this.data.has(path); }

@@ -57,7 +57,7 @@ export class Repository {
     // Bound parallel reads instead of opening every source file simultaneously.
     for (let i = 0; i < paths.length; i += 8) {
       const batch = await Promise.all(paths.slice(i, i + 8).map(async path => {
-        const revision = this.files.revision?.(path);
+        const revision = this.files.revision(path);
         const cached = this.cache.get(path);
         if (revision !== undefined && cached?.revision === revision) return cached.memos;
         const memos = parseMemos(await this.files.read(path), path);

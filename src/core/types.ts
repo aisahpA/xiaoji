@@ -96,7 +96,7 @@ export interface PluginData {
 export interface FilePort {
   erase?(path: string, expected: string): Promise<void>;
   move?(from: string, to: string): Promise<void>;
-  revision?(path: string): string | number | undefined;
+  revision(path: string): string | number | undefined;
   listMarkdown(): Promise<string[]>;
   read(path: string): Promise<string>;
   exists(path: string): Promise<boolean>;
