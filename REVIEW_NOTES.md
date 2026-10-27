@@ -28,10 +28,10 @@ heuristics may regress mobile sizing, editor typography or accessibility.
 
 ## Release consistency
 
-Run `npm run verify` and `npm run package` from one checkout. The packager checks
-manifest/package/lock/version-map agreement and packages the exact repository manifest.
-Upload `main.js`, `manifest.json` and `styles.css` from that same build, with release notes
-from CHANGELOG.md. Local builds do not modify existing GitHub releases.
+Run `npm run verify` from one checkout. It checks manifest/package/lock/version-map
+agreement and produces the exact repository manifest. Upload `main.js`, `manifest.json`
+and `styles.css` from `dist/` with release notes from CHANGELOG.md. Local builds do not
+modify existing GitHub releases.
 
 The verification workflow has read-only repository permissions and uploads build artifacts.
 It does not publish releases or create provenance attestations. Attestations need separately

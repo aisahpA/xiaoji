@@ -25,8 +25,8 @@ A quiet, local-first memo plugin for Obsidian. Keep ideas, everyday moments and 
 
 Requires **Obsidian 1.8.7+**. The standalone quick-capture window is desktop-only.
 
-1. 从[同一版本的 Release](https://github.com/cimuyang/xiaoji/releases) 下载 `main.js`、`manifest.json`、`styles.css`；本仓库根目录也保留这三个文件。
-   Download these three files from the [same release](https://github.com/cimuyang/xiaoji/releases). They are also included in the repository root.
+1. 从[同一版本的 Release](https://github.com/cimuyang/xiaoji/releases) 下载 `main.js`、`manifest.json`、`styles.css`。
+   Download these three files from the [same release](https://github.com/cimuyang/xiaoji/releases).
 2. 放入笔记库的 `.obsidian/plugins/xiaoji/`，重新加载 Obsidian，在「第三方插件」中启用。
    Place them in `<vault>/.obsidian/plugins/xiaoji/`, reload Obsidian and enable xiaoji under Community plugins.
 3. 升级时只替换上述文件，保留 `data.json`、笔记与附件。
@@ -75,12 +75,25 @@ Use Node.js 22.13+ and npm. Verification runs lint, type checks, regression test
 ```sh
 npm ci
 npm run verify
-npm run package
 ```
 
-安装包输出到 `dist/`。更新记录见 [CHANGELOG.md](CHANGELOG.md)，兼容性说明见 [REVIEW_NOTES.md](REVIEW_NOTES.md)。
+构建把 `main.js`、`manifest.json`、`styles.css` 一并输出到 `dist/`。
 
-Packages are written to `dist/`. See [CHANGELOG.md](CHANGELOG.md) for changes and [REVIEW_NOTES.md](REVIEW_NOTES.md) for compatibility notes.
+The build outputs `main.js`, `manifest.json` and `styles.css` together into `dist/`.
+
+本地调试用 `reload.sh`：指定 vault 目录后，它会构建、拷贝到插件目录并通过 Obsidian CLI 重载。配置一次 `VAULT_DIR` 即可：
+
+For local development use `reload.sh`: it builds, copies to the plugin folder and reloads via the Obsidian CLI. Set `VAULT_DIR` once:
+
+```sh
+echo 'VAULT_DIR=/path/to/vault' > reload.local.sh   # git-ignored
+npm run reload              # 生产构建 + 重载 / prod build + reload
+npm run reload dev          # dev 构建（内联 sourcemap）+ 重载 / dev build + reload
+```
+
+更新记录见 [CHANGELOG.md](CHANGELOG.md)，兼容性说明见 [REVIEW_NOTES.md](REVIEW_NOTES.md)。
+
+See [CHANGELOG.md](CHANGELOG.md) for changes and [REVIEW_NOTES.md](REVIEW_NOTES.md) for compatibility notes.
 
 ## 许可 · License
 
