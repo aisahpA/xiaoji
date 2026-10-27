@@ -598,11 +598,14 @@ export default class XiaojiPlugin extends Plugin {
 
   private async handleLink(params: Record<string, string>): Promise<void> {
     if (params.vault && params.vault !== this.app.vault.getName()) return;
-    await this.refresh();
-    const matches = this.repo.records.filter(memo => memo.id === params.id);
-    const inPath = matches.filter(memo => memo.path === params.path);
-    const occurrence = Number(params.occurrence ?? '0');
-    const memo = inPath.find(item => item.occurrence === occurrence) ?? (matches.length === 1 ? matches[0] : undefined);
+    const findMemo = (): Memo | undefined => {
+      const matches = this.repo.records.filter(memo => memo.id === params.id);
+      const inPath = matches.filter(memo => memo.path === params.path);
+      const occurrence = Number(params.occurrence ?? '0');
+      return inPath.find(item => item.occurrence === occurrence) ?? (matches.length === 1 ? matches[0] : undefined);
+    };
+    let memo = findMemo();
+    if (!memo) { await this.refresh(); memo = findMemo(); }
     if (!memo) throw new MemoError('conflict');
     const view = await this.openView();
     await view.revealMemo(memo);
@@ -652,8 +655,8 @@ export default class XiaojiPlugin extends Plugin {
   showAi(): void { if (this.prefs.aiEnabled) void this.openView().then(view => view.navigate('ask')).catch(error => this.report(error)); }
   showEdit(memo?: Memo): void { void this.openView().then(view => memo ? view.editMemo(memo) : view.focusComposer()).catch(error => this.report(error)); }
   async openMemo(id: string): Promise<void> {
-    await this.refresh();
-    const matches = this.repo.records.filter(memo => memo.id === id);
+    let matches = this.repo.records.filter(memo => memo.id === id);
+    if (!matches.length) { await this.refresh(); matches = this.repo.records.filter(memo => memo.id === id); }
     if (!matches.length) { new Notice(this.t('referenceMissing')); return; }
     if (matches.length === 1) { await (await this.openView()).revealMemo(matches[0]!); return; }
     const menu = new Menu();
