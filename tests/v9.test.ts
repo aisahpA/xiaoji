@@ -25,10 +25,6 @@ describe('durable navigation ordering', () => {
     expect(navigation(settings).some(item => item.id === 'ask' || item.id === 'review')).toBe(false);
     expect(navigation(loadSettings({ ...settings, aiEnabled: true }))[0]!.id).toBe('ask');
   });
-  it('migrates the old rediscover shortcut and ignores the removed vault-wide completion switch', () => {
-    const settings = loadSettings({ pinnedTools: ['review'], suggestVaultTags: true });
-    expect(settings.nav.find(item => item.kind === 'review')?.favorite).toBe(true); expect(settings).not.toHaveProperty('pinnedTools'); expect(settings).not.toHaveProperty('suggestVaultTags');
-  });
   it('leaves invalid and self drops unchanged', () => {
     for (const [source, target] of [['bad', 'all'], ['all', 'bad'], ['all', 'all']]) expect(moveRelative(['all', 'archive'], source!, target!, false, id => id)).toEqual(['all', 'archive']);
   });

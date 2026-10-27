@@ -120,7 +120,6 @@ export function loadSettings(value: unknown): Settings {
   if (Array.isArray(data.nav)) for (const raw of data.nav) {
     const item = record(raw);
     if (typeof item.id !== 'string' || seen.has(item.id) || item.id.length > 120) continue;
-    if (item.kind === 'saved') continue;
     const kind = oneOf(item.kind, ['all', 'archive', 'pinned', 'week', 'tasks', 'tag', 'trash', 'ask', 'review'] as const, 'all');
     const builtin = BUILTINS.find(entry => entry.id === item.id);
     if (!builtin && kind !== 'tag') continue;
@@ -134,7 +133,7 @@ export function loadSettings(value: unknown): Settings {
       includeArchived: bool(item.includeArchived, false),
     });
   }
-  for (const item of BUILTINS) if (!seen.has(item.id)) nav.push({ ...item, favorite: item.kind === 'review' && Array.isArray(data.pinnedTools) && data.pinnedTools.includes('review') ? true : item.favorite });
+  for (const item of BUILTINS) if (!seen.has(item.id)) nav.push({ ...item });
   let folder = defaults.folder;
   try { folder = normalizeFolder(text(data.folder, folder)); } catch { /* keep safe defaults */ }
   let chatFolder = defaults.chatFolder;

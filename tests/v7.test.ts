@@ -8,7 +8,6 @@ import { TrashStore } from '../src/core/trash-store';
 import { FixtureFiles, makeFixture } from './fixture';
 import { AskPanel } from '../src/ui/chat-panel';
 import { compactQuickWindow } from '../src/ui/quick-chrome';
-import XiaojiPlugin from '../src/main';
 const panels: AskPanel[] = [];
 afterEach(() => { for (const panel of panels.splice(0)) panel.unload(); document.body.replaceChildren(); vi.restoreAllMocks(); });
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
@@ -99,12 +98,5 @@ describe('dedicated quick window', () => {
     const cleanup = compactQuickWindow(document, false);
     expect(document.body.classList.contains('xj-quick-window')).toBe(true);
     expect(document.body.classList.contains('xj-quick-native-controls')).toBe(false); cleanup();
-  });
-  it('merges old explicit shortcut bindings without discarding new bindings or duplicates', async () => {
-    const hotkeyManager = { customKeys: { 'xiaoji:quick-window': [{ key: 'Q', modifiers: ['Ctrl'] }, { key: 'K', modifiers: ['Shift', 'Ctrl'] }], 'xiaoji:capture': [{ key: 'K', modifiers: ['Ctrl', 'Shift'] }] }, setHotkeys: vi.fn(), removeHotkeys: vi.fn(), save: vi.fn(async () => undefined) };
-    const plugin = new XiaojiPlugin({ hotkeyManager } as any, {} as any);
-    (plugin as any).migrateQuickHotkeys(); await tick();
-    expect(hotkeyManager.setHotkeys).toHaveBeenCalledWith('xiaoji:capture', [{ key: 'K', modifiers: ['Ctrl', 'Shift'] }, { key: 'Q', modifiers: ['Ctrl'] }]);
-    expect(hotkeyManager.removeHotkeys).toHaveBeenCalledWith('xiaoji:quick-window'); expect(hotkeyManager.save).toHaveBeenCalledTimes(1);
   });
 });

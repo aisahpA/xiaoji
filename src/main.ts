@@ -145,7 +145,6 @@ export default class XiaojiPlugin extends Plugin {
     this.addRibbonIcon('notebook-pen', this.t('openWorkspace'), () => { void this.openView().catch(error => this.report(error)); });
     this.addCommand({ id: 'open', name: this.t('openWorkspace'), callback: () => { void this.openView().catch(error => this.report(error)); } });
     this.addCommand({ id: 'capture', name: this.t('quickCapture'), callback: () => { void this.openQuick().catch(error => this.report(error)); } });
-    this.migrateQuickHotkeys();
     this.addCommand({ id: 'search', name: this.t('search'), callback: () => { void this.openView().then(view => view.focusSearch()).catch(error => this.report(error)); } });
     this.addCommand({ id: 'recycle-bin', name: this.t('trash'), callback: () => { this.showTrash(); } });
     this.addCommand({ id: 'review', name: this.t('review'), checkCallback: checking => {
@@ -301,22 +300,6 @@ export default class XiaojiPlugin extends Plugin {
     return leaf.view as MemoView;
   }
 
-  private migrateQuickHotkeys(): void {
-    // Keep the user's explicit bindings; only retire the duplicate command.
-    const manager = (this.app as App & { hotkeyManager?: {
-      customKeys?: Record<string, { modifiers: string[]; key: string }[]>;
-      setHotkeys?(id: string, keys: { modifiers: string[]; key: string }[]): void;
-      removeHotkeys?(id: string): void; save?(): Promise<void>;
-    } }).hotkeyManager;
-    const legacy = manager?.customKeys?.['xiaoji:quick-window'];
-    if (!legacy || !manager?.setHotkeys || !manager.removeHotkeys || !manager.save) return;
-    const current = manager.customKeys?.['xiaoji:capture'];
-    const keys = [...(current ?? []), ...legacy].filter((key, index, all) =>
-      all.findIndex(other => other.key === key.key && [...other.modifiers].sort().join() === [...key.modifiers].sort().join()) === index);
-    manager.setHotkeys('xiaoji:capture', keys);
-    manager.removeHotkeys('xiaoji:quick-window');
-    void manager.save().catch(error => this.report(error));
-  }
   quickWindowControls(leaf: WorkspaceLeaf): boolean {
     const native = this.nativeWindow(leaf);
     return native !== null && native !== undefined && ['minimize', 'maximize', 'unmaximize', 'isMaximized'].every(key => typeof Reflect.get(native, key) === 'function');

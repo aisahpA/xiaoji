@@ -1,5 +1,5 @@
 import { sleep } from './timers';
-import { dateFromId, timestamp } from './dates';
+import { timestamp } from './dates';
 import { normalizeFolder } from './settings';
 import { MemoError, type FilePort, type Memo } from './types';
 
@@ -10,19 +10,16 @@ export interface ChatTurn {
   status: 'pending' | 'complete' | 'interrupted' | 'failed'; createdAt: string;
 }
 export interface Conversation { id: string; title: string; createdAt: string; updatedAt: string; turns: ChatTurn[]; raw?: string; }
-interface ChatTrash { path: string; deletedAt: string; chat: Conversation; raw: string; }
 const marker = '\n<!-- xiaoji-conversation-data -->\n~~~xiaoji-json\n';
 const endMarker = '\n~~~\n<!-- /xiaoji-conversation-data -->\n';
 const validId = (value: unknown): value is string => typeof value === 'string' && /^\d{17}$/.test(value);
 const plain = (chat: Conversation) => ({ id: chat.id, title: chat.title, createdAt: chat.createdAt, updatedAt: chat.updatedAt, turns: chat.turns });
-function serializeLegacy(chat: Conversation, deletedAt?: string): string {
-  const payload = deletedAt ? { chat: plain(chat), deletedAt } : plain(chat);
-  const header = deletedAt ? 'xiaoji-conversation-trash: 1' : 'xiaoji-conversation: 1';
+function serializeLegacy(chat: Conversation): string {
   const readable = chat.turns.map(turn => '## ' + turn.createdAt + '\n\n### Question\n\n' + turn.question +
     '\n\n### Answer\n\n' + turn.answer + (turn.query ? '\n\n> ' + turn.query.scope : '') + '\n\n' + turn.sources.map(source =>
       '#### [' + source.number + '] @' + source.memo.id + '\n\n' + source.memo.body).join('\n\n')).join('\n\n');
-  return '---\n' + header + '\n---\n\n# ' + chat.title.replace(/[\r\n]/g, ' ') + '\n\n' + readable +
-    marker + JSON.stringify(payload, null, 2) + endMarker;
+  return '---\nxiaoji-conversation: 1\n---\n\n# ' + chat.title.replace(/[\r\n]/g, ' ') + '\n\n' + readable +
+    marker + JSON.stringify(plain(chat), null, 2) + endMarker;
 }
 /** Human-readable Markdown only. Machine state lives outside the note. */
 export function serializeConversation(chat: Conversation): string {
@@ -162,30 +159,7 @@ export class Conversations {
         if (raw !== chat.raw) throw new MemoError('chatConflict');
         if (this.files.erase) await this.files.erase(path, raw); else await this.files.remove(path);
       }
-      // Explicit permanent deletion also removes verified legacy copies of this conversation.
-      for (const backup of await this.files.listMarkdown()) if (backup.startsWith(this.root() + '_回收站/' + chat.id + '-')) {
-        const raw = await this.files.read(backup), entry = this.parseTrash(raw, backup);
-        if (entry.chat.id !== chat.id) throw new MemoError('chatInvalid');
-        await this.files.remove(backup);
-      }
       await this.removeState(chat.id);
     });
-  }
-  private parseTrash(raw: string, path: string): ChatTrash {
-    if (!path.startsWith(this.root() + '_回收站/')) throw new MemoError('chatInvalid');
-    if (raw.startsWith('---\nxiaoji-conversation: 1\n')) {
-      const match = /\/(\d{17})-(\d{17})\.md$/.exec(path);
-      if (!match) throw new MemoError('chatInvalid');
-      // Native link-safe moves may rebase the human-readable links in the recycle copy.
-      // Keep the full file bytes for conflict checks; the structured snapshot remains immutable.
-      const chat = { ...validate(decode(raw.replace(/\r\n/g, '\n'))), raw };
-      if (chat.id !== match[1]) throw new MemoError('chatInvalid');
-      const deleted = dateFromId(match[2]!); if (deleted === null) throw new MemoError('chatInvalid');
-      return { path, deletedAt: new Date(deleted).toISOString(), chat, raw };
-    }
-    if (!raw.startsWith('---\nxiaoji-conversation-trash: 1\n')) throw new MemoError('chatInvalid');
-    const value = decode(raw) as { chat?: unknown; deletedAt?: unknown };
-    if (typeof value?.deletedAt !== 'string') throw new MemoError('chatInvalid');
-    return { path, deletedAt: value.deletedAt, chat: validate(value.chat), raw };
   }
 }

@@ -56,8 +56,6 @@ describe('local conversation storage', () => {
     const loaded = await store.load(chat.id); await store.save(loaded);
     const clean = await files.read('小记对话/' + chat.id + '.md'); expect(clean.startsWith('# ')).toBe(true); expect(clean).not.toContain('xiaoji-json');
     expect((await store.load(chat.id)).id).toBe(chat.id);
-    files.data.set('小记对话/_回收站/' + chat.id + '-20261021130000000.md', raw);
-    await store.delete(loaded); expect([...files.data.keys()]).toEqual([]);
   });
   it('recovers when journal cleanup fails after a successful Markdown save', async () => {
     const { files, store } = setup(), chat = await store.create('journal');
