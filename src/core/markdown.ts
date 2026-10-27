@@ -8,14 +8,28 @@ import { MemoError, type Memo, type Settings } from './types';
 export const parseMarkdown = (text: string): Root =>
   fromMarkdown(text, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
 
-export function features(body: string): Pick<Memo, 'tags' | 'tasks'> {
+const SKIP_TYPES = new Set(['code', 'inlineCode', 'html', 'link', 'image', 'definition']);
+
+/**
+ * Shared tag/task extraction over an AST. When `stripFirstParagraphHeader` is
+ * provided, text nodes inside the first paragraph have the memo header
+ * (id + flags) stripped before tag extraction — used when walking a memo's
+ * listItem node directly so the timestamp doesn't pollute tags.
+ */
+function collectFeatures(
+  root: Nodes,
+  stripFirstParagraphHeader?: (text: string) => string,
+): Pick<Memo, 'tags' | 'tasks'> {
   const tags = new Set<string>();
   const tasks = { total: 0, incomplete: 0 };
-  const visit = (node: Nodes): void => {
-    if (node.type === 'code' || node.type === 'inlineCode' || node.type === 'html' ||
-      node.type === 'link' || node.type === 'image' || node.type === 'definition') return;
+
+  const visit = (node: Nodes, inFirstParagraph: boolean): void => {
+    if (SKIP_TYPES.has(node.type)) return;
     if (node.type === 'text') {
-      const text = node.value.replace(/\[\[[\s\S]*?\]\]/g, '');
+      let text = inFirstParagraph && stripFirstParagraphHeader
+        ? stripFirstParagraphHeader(node.value)
+        : node.value;
+      text = text.replace(/\[\[[\s\S]*?\]\]/g, '');
       for (const match of text.matchAll(/(?:^|[\s([{])#([\p{L}\p{N}_/-]+)/gu)) {
         const tag = match[1]?.replace(/\/+$/, '');
         if (tag && /[\p{L}_/-]/u.test(tag) && !tag.includes('//')) tags.add(tag);
@@ -25,10 +39,42 @@ export function features(body: string): Pick<Memo, 'tags' | 'tasks'> {
       tasks.total++;
       if (!node.checked) tasks.incomplete++;
     }
-    if ('children' in node) for (const child of node.children) visit(child);
+    if ('children' in node) for (const child of node.children) visit(child, inFirstParagraph);
   };
-  visit(parseMarkdown(body));
+
+  if (stripFirstParagraphHeader && 'children' in root) {
+    let firstParagraphSeen = false;
+    for (const child of root.children) {
+      const isFirstParagraph = !firstParagraphSeen && child.type === 'paragraph';
+      if (child.type === 'paragraph') firstParagraphSeen = true;
+      visit(child, isFirstParagraph);
+    }
+  } else {
+    visit(root, false);
+  }
+
   return { tags: [...tags], tasks };
+}
+
+export function features(body: string): Pick<Memo, 'tags' | 'tasks'> {
+  return collectFeatures(parseMarkdown(body));
+}
+
+/**
+ * Extract tags/tasks directly from a memo's listItem AST node without re-parsing the body.
+ * The first paragraph contains the header (id + flags), which is skipped before tag extraction.
+ */
+function featuresFromItem(item: Nodes): Pick<Memo, 'tags' | 'tasks'> {
+  let headerConsumed = false;
+  const stripHeader = (text: string): string => {
+    if (headerConsumed) return text;
+    const idMatch = /^(\d{17}|\d{14})/.exec(text);
+    if (!idMatch) return text;
+    headerConsumed = true;
+    // Remove the id and any flag tokens (×, ↑, ^blockId) that immediately follow it.
+    return text.slice(idMatch[0].length).replace(/^([ \t]*(?:×|↑|\^[A-Za-z0-9-]+))*[ \t]*/, '');
+  };
+  return collectFeatures(item, stripHeader);
 }
 
 export function parseMemos(text: string, path: string): Memo[] {
@@ -59,7 +105,7 @@ export function parseMemos(text: string, path: string): Memo[] {
         createdAt, archived: /(?:^|\s)×(?:\s|$)/.test(tail),
         pinned: /(?:^|\s)↑(?:\s|$)/.test(tail),
         blockId: /(?:^|\s)\^([A-Za-z0-9-]+)(?:\s|$)/.exec(tail)?.[1] ?? null,
-        ...features(body),
+        ...featuresFromItem(item),
       });
     }
   }
