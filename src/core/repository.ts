@@ -157,6 +157,14 @@ export class Repository {
     if (revision !== undefined) this.cache.set(path, { revision, memos });
   }
 
+  /** Return the cached memos for a path if the revision still matches; otherwise parse the text. */
+  private existingFor(path: string, text: string): Memo[] {
+    const revision = this.files.revision(path);
+    const cached = this.cache.get(path);
+    if (revision !== undefined && cached?.revision === revision) return cached.memos;
+    return parseMemos(text, path);
+  }
+
   async create(body: string, prepare?: (body: string, path: string) => string): Promise<Memo> {
     if (!body.trim()) throw new MemoError('emptyMemo');
     return this.enqueue(async () => {
@@ -171,7 +179,7 @@ export class Repository {
         let allMemos: Memo[] = [];
         try {
           await this.files.process(path, current => {
-            const existing = parseMemos(current, path);
+            const existing = this.existingFor(path, current);
             if (existing.some(memo => memo.id === id)) throw new MemoError('duplicate');
             const finalBody = prepare ? prepare(body, path) : body;
             const eol = current.includes('\r\n') ? '\r\n' : '\n';
@@ -209,7 +217,7 @@ export class Repository {
       let result: Memo | undefined;
       let allMemos: Memo[] = [];
       await this.files.process(snapshot.path, current => {
-        const existing = parseMemos(current, snapshot.path);
+        const existing = this.existingFor(snapshot.path, current);
         const { text: next, memo } = transform(current, existing);
         result = memo;
         allMemos = existing.map(memo => memo.key === snapshot.key ? result! : memo);
@@ -263,7 +271,7 @@ export class Repository {
   delete(snapshot: Memo): Promise<TrashEntry> {
     return this.enqueue(async () => {
       const text = await this.files.read(snapshot.path);
-      const existing = parseMemos(text, snapshot.path);
+      const existing = this.existingFor(snapshot.path, text);
       findUnchanged(text, snapshot, existing);
       const deletedAt = this.clock();
       let name = snapshot.id + '-' + timestamp(deletedAt) + '.md';
@@ -322,7 +330,7 @@ export class Repository {
       let restored: Memo | undefined;
       let allMemos: Memo[] = [];
       await this.files.process(path, current => {
-        const existing = parseMemos(current, path);
+        const existing = this.existingFor(path, current);
         if (existing.some(memo => memo.id === snapshot.memo.id)) throw new MemoError('restoreDuplicate');
         const next = appendMemo(current, entry.raw, snapshot.memo.createdAt, this.settings(), headingForDate(snapshot.memo.createdAt, this.settings()), existing);
         const start = next.indexOf(entry.raw);

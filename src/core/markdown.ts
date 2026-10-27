@@ -121,6 +121,13 @@ export function serializeMemo(id: string, body: string, flags: { archived?: bool
 }
 
 export function findUnchanged(text: string, snapshot: Memo, existing?: Memo[]): Memo {
+  // Fast path: if the snapshot's raw still matches at its recorded offsets, no parse needed.
+  if (snapshot.start >= 0 && snapshot.end > snapshot.start && text.slice(snapshot.start, snapshot.end) === snapshot.raw) {
+    // Still guard against duplicate ids: a regex header count is far cheaper than a full parse.
+    const idHeader = new RegExp('^- ' + snapshot.id + '(?:[ \\t]|$)', 'gm');
+    if ((text.match(idHeader) ?? []).length > 1) throw new MemoError('conflict');
+    return snapshot;
+  }
   const candidates = (existing ?? parseMemos(text, snapshot.path)).filter(memo => memo.id === snapshot.id);
   // An identical duplicated record is ambiguous too: never guess which one to edit.
   if (candidates.length !== 1 || candidates[0]?.raw !== snapshot.raw) throw new MemoError('conflict');
