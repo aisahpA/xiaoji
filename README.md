@@ -57,15 +57,6 @@ Requires **Obsidian 1.8.7+**. The standalone quick-capture window is desktop-onl
   Choose monthly, quarterly or yearly files and custom names/headings. Reformatting previews and backs up existing notes without renaming or repartitioning them. Migration prompts are copied; old notes are not uploaded automatically.
 
 
-## 0.16.2 · 搜索与流畅度 / Search & responsiveness
-
-- 搜索结果支持关键词、短语和标签词高亮，排除词不高亮；折叠或不可见的源文匹配提供上下文摘要。
-  Search highlights terms and phrases without highlighting exclusions; hidden source matches include a contextual excerpt.
-- 导航展开与宽度变化不重新查询小记；宽度滑块即时预览并合并保存。
-  Sidebar and width updates reuse query results; appearance sliders preview immediately and coalesce saves.
-- 屏幕附近按需挂载 Markdown，远处卡片释放组件并保留轻量高度占位；轻量占位数量随已加载记录增长。
-  Markdown components mount near the viewport and release offscreen, retaining lightweight height placeholders per loaded record.
-
 ## 开发 · Development
 
 使用 Node.js 22.13+ 与 npm；验证包含代码检查、类型检查、回归测试和生产构建。
