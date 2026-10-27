@@ -40,6 +40,7 @@ export async function makeFixture(overrides: Partial<Settings> = {}): Promise<{ 
   await repo.scan();
   const errors: unknown[] = [];
   const subscribers = new Set<() => void>();
+  let initialScanStarted = false;
   const fileObject = (path: string): TFile | null => files.data.has(path) ? new TFile(path) : null;
   const app: any = {
     vault: {
@@ -74,6 +75,7 @@ export async function makeFixture(overrides: Partial<Settings> = {}): Promise<{ 
     },
     clearDraft: async (key: string) => { delete data.drafts[key]; },
     refresh: async () => { await repo.scan(); plugin.notify(); },
+    ensureInitialScan: () => { if (!initialScanStarted) { initialScanStarted = true; void plugin.refresh().catch(plugin.report); } },
     report: (error: unknown) => { errors.push(error); },
     createMemo: (body: string) => repo.create(body),
     showEdit: () => undefined, showTrash: () => undefined, showAi: () => undefined,

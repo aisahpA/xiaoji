@@ -294,8 +294,11 @@ export default class XiaojiPlugin extends Plugin {
     const native = this.nativeWindow(leaf); if (native?.isMinimized?.()) native.restore?.(); native?.show?.(); native?.focus?.();
     view.focusComposer();
   }
-  async openView(): Promise<MemoView> {
+  ensureInitialScan(): void {
     if (!this.initialScanStarted) { this.initialScanStarted = true; void this.refresh().catch(error => this.report(error)); }
+  }
+  async openView(): Promise<MemoView> {
+    this.ensureInitialScan();
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     const leaf = existing ?? this.app.workspace.getLeaf('tab');
     if (!existing) await leaf.setViewState({ type: VIEW_TYPE, active: true });

@@ -237,6 +237,7 @@ export class MemoView extends ItemView {
     }, { root: this.scroller, rootMargin: '500px' });
     this.intersection.observe(this.sentinel);
     this.unsubscribe = this.plugin.subscribe(() => { this.syncComposer(); this.render(); if (this.currentId === 'trash') void this.trashPanel?.refresh().catch(error => this.plugin.report(error)); });
+    this.plugin.ensureInitialScan();
     this.render(true);
   }
 
