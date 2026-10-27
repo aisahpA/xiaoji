@@ -41,6 +41,11 @@ export class TrashFiles implements FilePort {
   private loaded: string | null = null;
   private tail: Promise<unknown> = Promise.resolve();
   constructor(private files: FilePort, private folder: () => string) {}
+  /** Forward the wrapped port's revision so Repository.scan's read cache stays effective through this wrapper. */
+  revision(path: string): string | number | undefined {
+    // Virtual trash entries are slices of the store file and have no per-file revision.
+    return path.startsWith(this.root()) ? undefined : this.files.revision?.(path);
+  }
   private root(): string { return this.folder() + '/_回收站/'; }
   private store(): string { return this.folder() + '/回收站.md'; }
   private queue<T>(fn: () => Promise<T>): Promise<T> { const p = this.tail.then(fn, fn); this.tail = p.catch(() => {}); return p; }
