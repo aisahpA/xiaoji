@@ -15,9 +15,9 @@ A quiet, local-first memo plugin for Obsidian. Keep ideas, everyday moments and 
 | 原生 Markdown，支持标签、待办、附件、代码、表格与公式 | Native Markdown with tags, tasks, attachments, code, tables and math |
 | 列表与瀑布流、置顶、归档、层级标签、搜索与批量整理 | List and waterfall layouts, pins, archives, nested tags, search and batch actions |
 | 顶部与侧栏独立配置，拖动排序 | Configure top and sidebar navigation separately; drag to reorder |
-| 桌面快速记录小窗，可置顶并转回主页面继续编辑 | Desktop quick capture with always-on-top and transfer to the main composer |
+| 桌面快速记录小窗，全局快捷键、置顶与转回主页面继续编辑 | Desktop quick capture with a global shortcut, always-on-top and transfer to the main composer |
 | 自定义存储、日期分组，Markdown 回收站与格式备份 | Flexible storage and date headings, Markdown Trash and formatting backups |
-| 可选 AI：检索小记、自定义提示词、保存或临时对话 | Optional AI with memo retrieval, custom prompts, saved or temporary chats |
+| 可选 AI：接入 API 或本机 Codex，检索小记、来源引用与临时对话 | Optional AI through API or local Codex, with memo retrieval, source citations and temporary chats |
 
 ## 安装与升级 · Installation & updates
 
@@ -47,7 +47,18 @@ Requires **Obsidian 1.8.7+**. The standalone quick-capture window is desktop-onl
 
 ## AI 与文件 · AI & files
 
-- AI 默认关闭。启用后配置兼容 Chat Completions 的服务地址、模型和密钥；选择「自动」「仅小记」或「不使用小记」，有来源的回答可展开相关小记。
+- 「通用 → 快速记录」录制组合键，同一行的「全局生效」默认开启。开启时 Obsidian 最小化也能创建或恢复小窗；关闭后相同按键仅在 Obsidian 内响应。冲突会提示，完全退出 Obsidian 后不响应。不同笔记库应使用不同组合键。
+  Record one shortcut in General → Quick capture. Global scope is enabled by default; disable it to use the same key only within Obsidian. It works while minimized when global scope is on. Conflicts are reported; Obsidian must still be running. Use different shortcuts for different vaults.
+- 「AI → 接入方式」可选择本机 Codex。安装并登录 [Codex CLI](https://learn.chatgpt.com/docs/cli) 或 Codex 桌面端后，点击「检测连接」读取模型列表。默认跟随本机配置；路径留空时比较已发现 CLI 的版本，选择较新的可用版本，手动路径优先。「连接详情与选项」显示实际路径、版本、配置目录及服务，可手动填写模型并发送不含小记的简短验证。检测连接本身不发送推理请求。
+  Choose Local Codex in AI → Connection after installing and signing in to [Codex CLI](https://learn.chatgpt.com/docs/cli) or Codex desktop. Check the connection to discover models. The default follows local Codex configuration. Automatic discovery selects the newest verified installed CLI; an explicit path takes priority. Connection details show the executable, version, configuration home and provider. A separate model test sends a short synthetic prompt without memos; checking the connection does not run inference.
+- Codex 仅用于桌面端，沿用插件的检索范围与引用；每次请求使用临时只读会话，工具关闭，取消会结束本次进程。插件不读取或复制 Codex 凭据，也不改动其全局配置；服务端的数据保留由服务方决定。
+  Codex is desktop-only and uses the plugin's retrieval scope and citations. Requests use ephemeral read-only threads with tools disabled; cancellation ends the owned process. The plugin does not read or copy Codex credentials or modify its global configuration. Provider retention still applies.
+- 「跟随本机 Codex」沿用所选 CLI 的默认模型配置，不同步桌面端某个聊天临时选择的模型，也不为小记文件夹创建 Codex 项目。模型目录不保证调用权限，错误不会触发静默降级；本机接入仍需要模型服务联网。
+  Following local Codex uses the selected CLI's configured default, not a desktop chat's temporary model choice. It does not create a Codex project for the memo folder. Catalog entries do not guarantee model access; failures never silently select another model. Inference still requires a network connection.
+- 历史对话被外部编辑后，可从历史菜单恢复到新对话。原文件保持不变，来源编号不会从外部文本自动重建。
+  Recover externally edited conversations from the history menu into a new chat. Originals stay unchanged; source numbers are not reconstructed from imported text.
+
+- AI 默认关闭。选择 API 后配置兼容 Chat Completions 的服务地址、模型和密钥；选择「自动」「仅小记」或「不使用小记」，有来源的回答可展开相关小记。
   AI is off by default. Configure a Chat Completions-compatible endpoint, model and key. Choose Auto, Memos only or No memos; expand related sources when available.
 - 可自定义对话目录、提示词，或使用临时会话。问题及按模式选择的小记内容会发送给服务商；临时模式不控制服务商的数据保留。
   Customize the chat folder and prompts, or use temporary sessions. Questions and context selected by the mode go to your provider; temporary mode does not control provider retention.
@@ -57,14 +68,16 @@ Requires **Obsidian 1.8.7+**. The standalone quick-capture window is desktop-onl
   Choose monthly, quarterly or yearly files and custom names/headings. Reformatting previews and backs up existing notes without renaming or repartitioning them. Migration prompts are copied; old notes are not uploaded automatically.
 
 
-## 0.16.2 · 搜索与流畅度 / Search & responsiveness
+## 0.16.4 更新 · What's new
 
-- 搜索结果支持关键词、短语和标签词高亮，排除词不高亮；折叠或不可见的源文匹配提供上下文摘要。
-  Search highlights terms and phrases without highlighting exclusions; hidden source matches include a contextual excerpt.
-- 导航展开与宽度变化不重新查询小记；宽度滑块即时预览并合并保存。
-  Sidebar and width updates reuse query results; appearance sliders preview immediately and coalesce saves.
-- 屏幕附近按需挂载 Markdown，远处卡片释放组件并保留轻量高度占位；轻量占位数量随已加载记录增长。
-  Markdown components mount near the viewport and release offscreen, retaining lightweight height placeholders per loaded record.
+- **一键随手记**：快捷键与全局开关合并，默认支持 Obsidian 最小化时唤起记录小窗。
+  **Capture anywhere:** one shortcut with a global toggle; open quick capture while Obsidian is minimized.
+- **续写更自然**：从小窗返回小记，光标自动停在草稿末尾。
+  **Continue smoothly:** returning to the main composer places the cursor at the end of your draft.
+- **本机 Codex 更省心**：自动识别较新运行时，跟随本机默认模型，支持连接详情与模型验证。
+  **Better local Codex:** discover newer installed runtimes, follow your configured model, and inspect or test the connection.
+- **深色模式更清晰**：修复光标不可见，切换主题保留输入和撤销记录。
+  **Clearer dark mode:** visible cursors, with text and undo history preserved across theme changes.
 
 ## 开发 · Development
 

@@ -1,4 +1,4 @@
-import { normalizeInputKeys } from './shortcuts';
+import { normalizeInputKeys, normalizeGlobalShortcut } from './shortcuts';
 import { MemoError, type NavItem, type Settings } from './types';
 
 export const BUILTINS: NavItem[] = [
@@ -16,6 +16,8 @@ export const DEFAULT_SETTINGS: Settings = {
   submitKey: 'Shift-Enter',
   newlineKey: 'Enter',
   quickPin: true,
+  captureKey: '',
+  captureGlobal: true,
   chatFolder: '小记对话',
   language: 'auto',
   folder: '小记',
@@ -39,6 +41,9 @@ export const DEFAULT_SETTINGS: Settings = {
   tagOrder: [],
   reviewEnabled: false,
   aiEnabled: false,
+  aiProvider: 'api',
+  codexPath: '',
+  codexModel: '',
   aiBaseUrl: 'https://api.deepseek.com/v1',
   aiModel: '',
   aiInstructions: '',
@@ -133,6 +138,8 @@ export function loadSettings(value: unknown): Settings {
   return {
     ...normalizeInputKeys(data.submitKey, data.newlineKey),
     quickPin: bool(data.quickPin, true),
+    captureKey: normalizeGlobalShortcut(data.captureKey ?? data.globalCaptureKey) ?? '',
+    captureGlobal: bool(data.captureGlobal, true),
     chatFolder,
     chatFolders: [...new Set([...(Array.isArray(data.chatFolders) ? data.chatFolders.filter((v): v is string => typeof v === 'string') : []), chatFolder])],
     language: oneOf(data.language, ['auto', 'zh', 'en'] as const, defaults.language),
@@ -165,6 +172,9 @@ export function loadSettings(value: unknown): Settings {
     tagOrder: Array.isArray(data.tagOrder) ? [...new Set(data.tagOrder.filter((value): value is string => typeof value === 'string' && value.length <= 1000 && /^[\p{L}\p{N}_/-]+$/u.test(value) && !value.includes('//')))].slice(0, 20000) : [],
     reviewEnabled: bool(data.reviewEnabled, false),
     aiEnabled: bool(data.aiEnabled, false),
+    aiProvider: oneOf(data.aiProvider, ['api', 'codex'] as const, 'api'),
+    codexPath: text(data.codexPath, '').trim().slice(0, 4096),
+    codexModel: text(data.codexModel, '').trim().slice(0, 200),
     aiBaseUrl: text(data.aiBaseUrl, defaults.aiBaseUrl).trim(),
     aiModel: text(data.aiModel, defaults.aiModel).trim(),
     aiInstructions: text(data.aiInstructions, defaults.aiInstructions).slice(0, 4000),

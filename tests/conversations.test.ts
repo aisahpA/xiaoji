@@ -37,6 +37,19 @@ describe('local conversation storage', () => {
     await expect(store.load(chat.id)).rejects.toThrow('chatInvalid');
     expect((await store.list()).damaged).toHaveLength(1);
   });
+  it('recovers changed Markdown as a new conversation without modifying the source or inventing citations', async () => {
+    const { files, store } = setup(), chat = await store.create('原始对话');
+    const path = '小记对话/' + chat.id + '.md'; const changed = '# 手动标题\r\n\r\n外部修改的完整内容 [1]。'; files.data.set(path, changed);
+    const recovered = await store.recover(path, '外部对话内容');
+    expect(recovered.id).not.toBe(chat.id); expect(await files.read(path)).toBe(changed);
+    const reopened = await store.load(recovered.id);
+    expect(reopened.title).toBe('手动标题'); expect(reopened.turns[0]).toMatchObject({ imported: true, answer: changed, sources: [] });
+  });
+  it('refuses to recover arbitrary paths or files outside managed conversation history', async () => {
+    const { files, store } = setup(); files.data.set('其他/20261021110000001.md', '# Other');
+    await expect(store.recover('其他/20261021110000001.md', '外部内容')).rejects.toThrow('chatInvalid');
+    await expect(store.recover('小记对话/../20261021110000001.md', '外部内容')).rejects.toThrow('chatInvalid');
+  });
   it('permanently deletes a saved conversation and all machine state without creating recycle files', async () => {
     const { files, store } = setup(), chat = await store.create('直接删除');
     chat.turns.push({ id: '20261021110000001', question: 'Q', answer: 'A', status: 'complete', createdAt: new Date().toISOString(), sources: [] });

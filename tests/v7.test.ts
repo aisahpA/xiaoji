@@ -99,11 +99,13 @@ describe('dedicated quick window', () => {
     expect(document.body.classList.contains('xj-quick-window')).toBe(true);
     expect(document.body.classList.contains('xj-quick-native-controls')).toBe(false); cleanup();
   });
-  it('merges old explicit shortcut bindings without discarding new bindings or duplicates', async () => {
+  it('migrates native shortcuts to the single capture setting, preferring the current command', async () => {
     const hotkeyManager = { customKeys: { 'xiaoji:quick-window': [{ key: 'Q', modifiers: ['Ctrl'] }, { key: 'K', modifiers: ['Shift', 'Ctrl'] }], 'xiaoji:capture': [{ key: 'K', modifiers: ['Ctrl', 'Shift'] }] }, setHotkeys: vi.fn(), removeHotkeys: vi.fn(), save: vi.fn(async () => undefined) };
     const plugin = new XiaojiPlugin({ hotkeyManager } as any, {} as any);
-    (plugin as any).migrateQuickHotkeys(); await tick();
-    expect(hotkeyManager.setHotkeys).toHaveBeenCalledWith('xiaoji:capture', [{ key: 'K', modifiers: ['Ctrl', 'Shift'] }, { key: 'Q', modifiers: ['Ctrl'] }]);
+    const fixture = await makeFixture(); plugin.data = fixture.plugin.data; plugin.persist = vi.fn(async () => undefined);
+    await (plugin as any).migrateQuickHotkeys();
+    expect(plugin.prefs.captureKey).toBe('Mod-Shift-K'); expect(plugin.persist).toHaveBeenCalledOnce();
+    expect(hotkeyManager.removeHotkeys).toHaveBeenCalledWith('xiaoji:capture');
     expect(hotkeyManager.removeHotkeys).toHaveBeenCalledWith('xiaoji:quick-window'); expect(hotkeyManager.save).toHaveBeenCalledTimes(1);
   });
 });

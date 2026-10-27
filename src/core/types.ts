@@ -36,6 +36,8 @@ export interface Settings {
   submitKey: string;
   newlineKey: string;
   quickPin: boolean;
+  captureKey: string;
+  captureGlobal: boolean;
   chatFolder: string;
   chatFolders?: string[];
   language: Language;
@@ -60,6 +62,9 @@ export interface Settings {
   tagOrder: string[];
   reviewEnabled: boolean;
   aiEnabled: boolean;
+  aiProvider: 'api' | 'codex';
+  codexPath: string;
+  codexModel: string;
   aiBaseUrl: string;
   aiModel: string;
   aiInstructions: string;
@@ -94,7 +99,7 @@ export interface PluginData {
 export interface FilePort {
   erase?(path: string, expected: string): Promise<void>;
   move?(from: string, to: string): Promise<void>;
-  revision?(path: string): string | number;
+  revision?(path: string): string | number | undefined;
   listMarkdown(): Promise<string[]>;
   read(path: string): Promise<string>;
   exists(path: string): Promise<boolean>;

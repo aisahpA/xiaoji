@@ -308,6 +308,7 @@ export class MemoView extends ItemView {
     try { editor.setValue(value); await this.plugin.persist(); }
     catch (error) { editor.setValue(before); throw error; }
     finally { editor.setBusy(false); }
+    editor.moveCursor(editor.getValue().length);
     this.focusComposer();
   }
   focusComposer(): void { this.scroller.scrollTop = 0; this.composer?.focus(); }

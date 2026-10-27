@@ -41,6 +41,7 @@ export class TrashFiles implements FilePort {
   private loaded: string | null = null;
   private tail: Promise<unknown> = Promise.resolve();
   constructor(private files: FilePort, private folder: () => string) {}
+  revision(path: string): string | number | undefined { return path.startsWith(this.root()) ? undefined : this.files.revision?.(path); }
   private root(): string { return this.folder() + '/_回收站/'; }
   private store(): string { return this.folder() + '/回收站.md'; }
   private queue<T>(fn: () => Promise<T>): Promise<T> { const p = this.tail.then(fn, fn); this.tail = p.catch(() => {}); return p; }

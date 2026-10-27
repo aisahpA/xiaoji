@@ -574,6 +574,24 @@ describe('independent input keys and reusable quick capture', () => {
     view.contentEl.querySelector<HTMLButtonElement>('.xj-submit')!.click(); await flush(); await flush();
     expect(plugin.repo.records.length).toBe(count + 1); expect(editor.state.doc.toString()).toBe(''); expect(editor.hasFocus).toBe(true);
   });
+  it.each(['', '现有草稿'])('continues capture at the end of the merged draft: %s', async before => {
+    const { plugin, view, root } = await setup();
+    const editor = EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)!;
+    if (before) editor.dispatch({ changes: { from: 0, insert: before } });
+    const count = plugin.repo.records.length;
+    await view.receiveCapture('追加内容🙂', '');
+    expect(editor.state.doc.toString()).toBe([before, '追加内容🙂'].filter(Boolean).join('\n\n'));
+    expect(editor.state.selection.main.anchor).toBe(editor.state.doc.length); expect(editor.hasFocus).toBe(true);
+    expect(plugin.repo.records.length).toBe(count);
+  });
+  it('keeps the original main draft when capture persistence fails', async () => {
+    const { plugin, view, root } = await setup();
+    const editor = EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)!;
+    editor.dispatch({ changes: { from: 0, insert: '未保存的草稿' } });
+    plugin.persist = vi.fn(async () => { throw Error('disk full'); });
+    await expect(view.receiveCapture('追加内容', '')).rejects.toThrow('disk full');
+    expect(editor.state.doc.toString()).toBe('未保存的草稿'); expect(editor.contentDOM.contentEditable).not.toBe('false');
+  });
   it('reopening quick capture restores its own draft without main capture adopting it', async () => {
     const { plugin } = await makeFixture(); const quick = new QuickView({ app: plugin.app } as unknown as WorkspaceLeaf, plugin); quickViews.push(quick); document.body.append(quick.containerEl); await quick.onOpen();
     EditorView.findFromDOM(quick.contentEl.querySelector<HTMLElement>('.cm-editor')!)!.dispatch({ changes: { from: 0, insert: '小窗草稿' } });

@@ -32,6 +32,7 @@ export class MemoEditor extends Component {
   private attachments: Promise<void> = Promise.resolve();
   private editability = new Compartment();
   private tooltipConfig = new Compartment();
+  private themeConfig = new Compartment();
   private completionClass = 'xj-completion-' + crypto.randomUUID();
   private completionCleanup: (() => void) | null = null;
 
@@ -48,6 +49,7 @@ export class MemoEditor extends Component {
           this.tooltipConfig.of(tooltips({ parent: parent.ownerDocument.body, position: 'fixed' })),
           history(), drawSelection(), bracketMatching(), indentOnInput(),
           this.editability.of([]),
+          this.themeConfig.of(EditorView.theme({}, { dark: parent.ownerDocument.body.classList.contains('theme-dark') })),
           markdown(),
           sourceReferences(plugin),
           EditorView.lineWrapping,
@@ -83,17 +85,31 @@ export class MemoEditor extends Component {
           EditorView.contentAttributes.of({ 'aria-label': plugin.t('capture'), spellcheck: 'true', autocapitalize: 'sentences' }),
           EditorView.theme({
             '&': { fontSize: 'var(--font-text-size)', backgroundColor: 'transparent' },
-            '.cm-content': { fontFamily: 'var(--font-text)', padding: '12px 0', minHeight: options.expanded ? '240px' : '58px' },
             '.cm-line': { padding: '0 14px', fontSize: 'inherit', fontWeight: 'normal', lineHeight: '1.6' },
             '.cm-scroller': { fontFamily: 'inherit' },
+            '.cm-content': { fontFamily: 'var(--font-text)', padding: '12px 0', minHeight: options.expanded ? '240px' : '58px', caretColor: 'var(--caret-color, var(--text-normal))' },
+            '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--caret-color, var(--text-normal))' },
             '&.cm-focused': { outline: 'none' },
             '.cm-gutters': { display: 'none' },
           }),
         ],
       }),
     });
+    let themeDocument: Document | null = null;
+    let themeObserver: MutationObserver | null = null;
+    const syncTheme = (doc: Document): void => {
+      if (themeDocument === doc) return;
+      themeObserver?.disconnect(); themeDocument = doc;
+      const update = (): void => {
+        const dark = doc.body.classList.contains('theme-dark');
+        if (!this.destroyed && this.view.state.facet(EditorView.darkTheme) !== dark) this.view.dispatch({ effects: this.themeConfig.reconfigure(EditorView.theme({}, { dark })) });
+      };
+      themeObserver = new MutationObserver(update); themeObserver.observe(doc.body, { attributes: true, attributeFilter: ['class'] }); update();
+    };
+    syncTheme(parent.ownerDocument);
+    this.register(() => themeObserver?.disconnect());
     this.bindCompletionMouse(this.root.ownerDocument);
-    this.root.addEventListener('focusin', () => { const owner = this.root.ownerDocument; if (this.view.root !== owner) { this.bindCompletionMouse(owner); this.view.setRoot(owner); this.view.dispatch({ effects: this.tooltipConfig.reconfigure(tooltips({ parent: owner.body, position: 'fixed' })) }); } });
+    this.root.addEventListener('focusin', () => { const owner = this.root.ownerDocument; if (this.view.root !== owner) { this.bindCompletionMouse(owner); this.view.setRoot(owner); this.view.dispatch({ effects: this.tooltipConfig.reconfigure(tooltips({ parent: owner.body, position: 'fixed' })) }); } syncTheme(owner); });
     const flush = (): void => { void plugin.flushDrafts?.().catch(error => plugin.report(error)); };
     const owner = this.root.ownerDocument, win = owner.defaultView;
     this.view.contentDOM.addEventListener('blur', flush); win?.addEventListener('blur', flush);
@@ -192,7 +208,7 @@ export class MemoEditor extends Component {
     this.focus();
   }
   focus(): void { this.view.focus(); }
-  moveCursor(position: number): void { this.view.dispatch({ selection: { anchor: Math.max(0, Math.min(position, this.view.state.doc.length)) } }); }
+  moveCursor(position: number): void { this.view.dispatch({ selection: { anchor: Math.max(0, Math.min(position, this.view.state.doc.length)) }, scrollIntoView: true }); }
   appendLine(text: string): void {
     if (this.busy) return;
     const value = this.getValue(), suffix = value && !value.endsWith('\n') ? '\n' : '';

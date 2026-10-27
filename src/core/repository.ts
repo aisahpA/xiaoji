@@ -75,6 +75,12 @@ export class Repository {
       result.push(...batch.flat());
     }
     if (version === this.scanVersion) {
+      const unchanged = result.length === this.records.length && result.every((memo, index) => {
+        const previous = this.records[index];
+        return memo === previous || previous !== undefined && memo.key === previous.key && memo.raw === previous.raw &&
+          memo.start === previous.start && memo.end === previous.end && memo.line === previous.line;
+      });
+      if (unchanged) return this.records;
       this.records = result;
       const ids = new Set<string>();
       this.duplicates.clear();
@@ -173,7 +179,7 @@ export class Repository {
         }
         if (!result) throw new MemoError('writeFailed');
         this.invalidate(path);
-        this.records.push(result);
+        this.records = [...this.records, result];
         return result;
       }
       throw new MemoError('duplicate');
@@ -296,7 +302,7 @@ export class Repository {
       });
       if (!restored) throw new MemoError('writeFailed');
       this.invalidate(path);
-      this.records.push(restored);
+      this.records = [...this.records, restored];
       try { await this.files.remove(entry.path); }
       catch { throw new MemoError('restoreBackupRemains'); }
       return restored;

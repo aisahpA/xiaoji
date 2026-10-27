@@ -7,6 +7,8 @@ import { MemoError, type Settings } from '../core/types';
 import { isMessageKey, type MessageKey } from '../i18n';
 import { bindErrors, button, element, empty } from './dom';
 import { eventShortcut } from '../core/shortcuts';
+import { normalizeGlobalShortcut } from '../core/shortcuts';
+import type { CodexInfo } from '../core/codex';
 import { shortcutLabel } from './submit';
 import { chatEndpoint, DEFAULT_AI_PROMPT } from '../core/ai';
 import { surfaceNavigation, reorderSurface, type NavSurface } from '../core/navigation';
@@ -23,6 +25,10 @@ export class XiaojiSettings extends PluginSettingTab {
   private preview: HTMLElement | null = null;
   private saves = new Set<AutoSave>();
   private sorter: NavigationSort | null = null;
+  private codexInfo: CodexInfo | null = null;
+  private codexInfoPath: string | null = null;
+  private codexProbe: AbortController | null = null;
+  private resumeCapture: (() => void) | null = null;
   constructor(app: App, private plugin: XiaojiPlugin) {
     super(app, plugin);
     bindErrors(this.containerEl, error => plugin.report(error));
@@ -31,6 +37,8 @@ export class XiaojiSettings extends PluginSettingTab {
   display(): void { this.render(); }
 
   private render(): void {
+    this.codexProbe?.abort(); this.codexProbe = null;
+    this.resumeCapture?.(); this.resumeCapture = null;
     const p = this.plugin; this.sorter?.destroy(); this.sorter = null;
     for (const save of this.saves) void save.close(); this.saves.clear();
     empty(this.containerEl); this.containerEl.classList.add('xj-settings');
@@ -51,7 +59,7 @@ export class XiaojiSettings extends PluginSettingTab {
 
   private redisplay(): void { const host = this.containerEl.closest<HTMLElement>('.vertical-tab-content') ?? this.containerEl; const scroll = host.scrollTop; this.render(); host.scrollTop = scroll; }
   private async flush(): Promise<void> { await Promise.all([...this.saves].map(save => save.flush())); }
-  hide(): void { this.sorter?.destroy(); this.sorter = null; for (const save of this.saves) void save.close(); this.saves.clear(); }
+  hide(): void { this.codexProbe?.abort(); this.codexProbe = null; this.resumeCapture?.(); this.resumeCapture = null; this.sorter?.destroy(); this.sorter = null; for (const save of this.saves) void save.close(); this.saves.clear(); }
   private fieldError(input: HTMLElement, error?: unknown): void {
     const row = input.closest<HTMLElement>('.setting-item');
     if (!row) return;
@@ -259,6 +267,107 @@ export class XiaojiSettings extends PluginSettingTab {
     new Setting(panel).setName('AI').setDesc(p.t('aiHint')).addToggle(toggle =>
       toggle.setValue(p.prefs.aiEnabled).onChange(value => this.change({ aiEnabled: value }, true)));
     if (!p.prefs.aiEnabled) return;
+    new Setting(panel).setName(p.t('aiProvider')).addDropdown(control => control
+      .addOption('api', p.t('apiProvider')).addOption('codex', p.t('codexProvider')).setValue(p.prefs.aiProvider)
+      .onChange(value => {
+        if (value === 'codex' && Platform.isMobile) { control.setValue(p.prefs.aiProvider); p.report(new MemoError('codexDesktopOnly')); return; }
+        this.change({ aiProvider: value as Settings['aiProvider'] }, true);
+      }));
+    if (p.prefs.aiProvider === 'codex') this.codexConnection(panel);
+    else this.apiConnection(panel);
+    new Setting(panel).setName(p.t('saveConversations')).setDesc(p.t('saveConversationsHint')).addToggle(control => control.setValue(p.prefs.saveConversations).onChange(value => this.change({ saveConversations: value }, true)));
+    if (p.prefs.saveConversations) {
+      new Setting(panel).setName(p.t('chatFolder')).addText(control => {
+        control.setValue(p.prefs.chatFolder);
+        this.autoText(control.inputEl, value => p.updateSettings({ chatFolder: normalizeFolder(value) }));
+      });
+    }
+    new Setting(panel).setName(p.t('memoAccess')).addDropdown(control => control.addOption('auto', p.t('memoAuto')).addOption('strict', p.t('memoStrict')).addOption('off', p.t('memoOff')).setValue(p.prefs.aiMemoMode).onChange(value => this.change({ aiMemoMode: value as Settings['aiMemoMode'] })));
+    const advanced = element(panel, 'details', 'xj-settings-advanced');
+    element(advanced, 'summary', '', p.t('aiAdvanced'));
+    element(advanced, 'p', 'xj-hint', p.t('aiHowItWorks'));
+    new Setting(advanced).setName(p.t('systemPrompt')).setDesc(p.t('systemPromptHint'))
+      .addTextArea(control => { control.setValue(p.prefs.aiSystemPrompt || DEFAULT_AI_PROMPT + (p.prefs.aiInstructions ? '\n' + p.prefs.aiInstructions : '')); this.autoText(control.inputEl, value => p.updateSettings({ aiSystemPrompt: value })); control.inputEl.maxLength = 12000; control.inputEl.rows = 9; control.inputEl.classList.add('xj-system-prompt'); })
+      .addExtraButton(control => control.setIcon('rotate-ccw').setTooltip(p.t('restoreDefaults')).onClick(() => { this.change({ aiSystemPrompt: '', aiInstructions: '' }, true); }));
+    this.slider(advanced, 'maxEvidence', p.prefs.aiMaxMemos, 1, 40, value => this.change({ aiMaxMemos: value }));
+    this.slider(advanced, 'maxCharacters', p.prefs.aiMaxCharacters, 2000, 80000, value => this.change({ aiMaxCharacters: value }));
+  }
+
+  private codexConnection(panel: HTMLElement): void {
+    const p = this.plugin;
+    if (Platform.isMobile) { element(panel, 'p', 'xj-hint', p.t('codexDesktopOnly')); return; }
+    element(panel, 'p', 'xj-hint', p.t('codexHint'));
+    if (this.codexInfoPath !== p.prefs.codexPath) { this.codexInfo = null; this.codexInfoPath = p.prefs.codexPath; }
+    let modelControl: HTMLSelectElement;
+    let probeStatus: HTMLElement | null = null;
+    const stopProbe = (): void => { this.codexProbe?.abort(); this.codexProbe = null; if (probeStatus) probeStatus.textContent = ''; };
+    const fillModels = (): void => {
+      modelControl.replaceChildren();
+      const defaultModel = this.codexInfo?.model;
+      const models = [{ id: '', name: p.t('codexDefault') + (defaultModel ? ' · ' + defaultModel : '') }, ...(this.codexInfo?.models ?? [])];
+      if (defaultModel && !models.some(model => model.id === defaultModel)) models.push({ id: defaultModel, name: defaultModel + ' · ' + p.t('codexConfiguredDefault') });
+      if (p.prefs.codexModel && !models.some(model => model.id === p.prefs.codexModel)) models.push({ id: p.prefs.codexModel, name: p.prefs.codexModel });
+      for (const model of models) { const option = modelControl.ownerDocument.win.createFragment().createEl('option'); option.value = model.id; option.textContent = model.name; modelControl.append(option); }
+      modelControl.value = p.prefs.codexModel;
+    };
+    new Setting(panel).setName(p.t('model')).addDropdown(control => { modelControl = control.selectEl; fillModels(); control.onChange(value => { stopProbe(); this.change({ codexModel: value }); }); });
+    const connection = new Setting(panel).setName(p.t('codexConnect')).setDesc(p.t('codexCheckHint'));
+    const status = element(connection.infoEl, 'div', 'xj-connection-status'); status.setAttribute('role', 'status');
+    connection.addButton(control => control.setButtonText(p.t('codexConnect')).onClick(() => {
+      void (async () => {
+        control.setDisabled(true); status.textContent = p.t('codexChecking'); status.classList.remove('is-error');
+        try {
+          stopProbe();
+          await this.flush(); const info = await p.inspectCodex();
+          if (!control.buttonEl.isConnected) return;
+          this.codexInfo = info; fillModels(); drawDetails(); status.textContent = p.t('codexConnected');
+          if (!p.prefs.codexModel && info.model && !info.models.some(model => model.id === info.model)) status.textContent += '\n' + p.t('codexDefaultMissing');
+        } catch (error) {
+          if (status.isConnected) { status.classList.add('is-error'); status.textContent = p.t(error instanceof MemoError && isMessageKey(error.code) ? error.code : 'codexDisconnected'); }
+        } finally { control.setDisabled(false); }
+      })();
+    }));
+    const advanced = element(panel, 'details', 'xj-settings-advanced'); element(advanced, 'summary', '', p.t('codexAdvanced'));
+    const details = element(advanced, 'dl', 'xj-codex-details');
+    const drawDetails = (): void => {
+      empty(details); const info = this.codexInfo; if (!info) return;
+      const values: [MessageKey, string | undefined][] = [
+        ['codexRuntimePath', info.runtime?.path], ['codexRuntimeVersion', info.runtime?.version],
+        ['codexRuntimeSource', info.runtime ? p.t(info.runtime.source === 'desktop' ? 'codexSourceDesktop' : info.runtime.source === 'configured' ? 'codexSourceConfigured' : 'codexSourcePath') : undefined],
+        ['codexSignInMethod', info.signIn ? p.t(info.signIn === 'chatgpt' ? 'codexLoginChatGPT' : info.signIn === 'apiKey' ? 'apiKey' : 'codexLoginExternal') : undefined],
+        ['codexProviderId', info.provider], ['codexRuntimeHome', info.runtime?.home], ['codexConfiguredDefault', info.model],
+      ];
+      for (const [key, value] of values) if (value) { element(details, 'dt', '', p.t(key)); element(details, 'dd', '', value); }
+    };
+    drawDetails();
+    new Setting(advanced).setName(p.t('codexPath')).setDesc(p.t('codexPathHint')).addText(control => {
+      control.setValue(p.prefs.codexPath); this.autoText(control.inputEl, async value => { stopProbe(); await p.updateSettings({ codexPath: value.trim() }); this.codexInfo = null; this.codexInfoPath = p.prefs.codexPath; fillModels(); drawDetails(); status.textContent = ''; });
+    });
+    new Setting(advanced).setName(p.t('codexCustomModel')).setDesc(p.t('codexCustomHint')).addText(control => {
+      control.setValue(p.prefs.codexModel); this.autoText(control.inputEl, async value => { stopProbe(); await p.updateSettings({ codexModel: value.trim() }); fillModels(); });
+    });
+    const validation = new Setting(advanced).setName(p.t('codexValidateModel')).setDesc(p.t('codexValidateHint'));
+    probeStatus = element(validation.infoEl, 'div', 'xj-connection-status'); probeStatus.setAttribute('role', 'status');
+    validation.addButton(control => control.setButtonText(p.t('codexValidateModel')).onClick(() => {
+      void (async () => {
+        stopProbe(); let controller: AbortController | undefined, timer: number | undefined;
+        control.setDisabled(true);
+        try {
+          await this.flush(); if (!control.buttonEl.isConnected) return;
+          controller = new AbortController(); this.codexProbe = controller;
+          probeStatus.textContent = p.t('codexChecking'); probeStatus.classList.remove('is-error');
+          timer = window.setTimeout(() => controller?.abort(), 45000);
+          await p.verifyCodexModel(controller.signal);
+          if (probeStatus?.isConnected && this.codexProbe === controller) probeStatus.textContent = p.t('codexModelReady');
+        }
+        catch (error) { if (probeStatus?.isConnected && (!controller || this.codexProbe === controller)) { probeStatus.classList.add('is-error'); probeStatus.textContent = p.t(controller?.signal.aborted ? 'codexTimeout' : error instanceof MemoError && isMessageKey(error.code) ? error.code : 'codexRequestFailed'); } }
+        finally { window.clearTimeout(timer); if (this.codexProbe === controller) this.codexProbe = null; control.setDisabled(false); }
+      })();
+    }));
+  }
+
+  private apiConnection(panel: HTMLElement): void {
+    const p = this.plugin;
     new Setting(panel).setName(p.t('endpoint')).addText(text => { text.setValue(p.prefs.aiBaseUrl); this.autoText(text.inputEl, value => { if (value.trim()) chatEndpoint(value); return p.updateSettings({ aiBaseUrl: value }); }); });
     new Setting(panel).setName(p.t('model')).addText(text => { text.setValue(p.prefs.aiModel); this.autoText(text.inputEl, value => p.updateSettings({ aiModel: value })); });
     let password!: TextComponent, secretSave!: AutoSave;
@@ -279,44 +388,49 @@ export class XiaojiSettings extends PluginSettingTab {
     key.addExtraButton(control => control.setIcon('x').setTooltip(p.t('clearSecret')).onClick(() => {
       password.setValue(''); secretSave.schedule(() => { p.setApiKey(''); password.setPlaceholder(''); this.fieldError(password.inputEl); }, true);
     }));
-    new Setting(panel).setName(p.t('saveConversations')).setDesc(p.t('saveConversationsHint')).addToggle(control => control.setValue(p.prefs.saveConversations).onChange(value => this.change({ saveConversations: value }, true)));
-    if (p.prefs.saveConversations) {
-      new Setting(panel).setName(p.t('chatFolder')).addText(control => {
-        control.setValue(p.prefs.chatFolder);
-        this.autoText(control.inputEl, value => p.updateSettings({ chatFolder: normalizeFolder(value) }));
-      });
-    }
-    new Setting(panel).setName(p.t('memoAccess')).addDropdown(control => control.addOption('auto', p.t('memoAuto')).addOption('strict', p.t('memoStrict')).addOption('off', p.t('memoOff')).setValue(p.prefs.aiMemoMode).onChange(value => this.change({ aiMemoMode: value as Settings['aiMemoMode'] })));
-    const advanced = element(panel, 'details', 'xj-settings-advanced');
-    element(advanced, 'summary', '', p.t('aiAdvanced'));
-    element(advanced, 'p', 'xj-hint', p.t('aiHowItWorks'));
-    new Setting(advanced).setName(p.t('systemPrompt')).setDesc(p.t('systemPromptHint'))
-      .addTextArea(control => { control.setValue(p.prefs.aiSystemPrompt || DEFAULT_AI_PROMPT + (p.prefs.aiInstructions ? '\n' + p.prefs.aiInstructions : '')); this.autoText(control.inputEl, value => p.updateSettings({ aiSystemPrompt: value })); control.inputEl.maxLength = 12000; control.inputEl.rows = 9; control.inputEl.classList.add('xj-system-prompt'); })
-      .addExtraButton(control => control.setIcon('rotate-ccw').setTooltip(p.t('restoreDefaults')).onClick(() => { this.change({ aiSystemPrompt: '', aiInstructions: '' }, true); }));
-    this.slider(advanced, 'maxEvidence', p.prefs.aiMaxMemos, 1, 40, value => this.change({ aiMaxMemos: value }));
-    this.slider(advanced, 'maxCharacters', p.prefs.aiMaxCharacters, 2000, 80000, value => this.change({ aiMaxCharacters: value }));
   }
 
-  private shortcutSetting(panel: HTMLElement, field: 'submitKey' | 'newlineKey'): void {
+  private shortcutSetting(panel: HTMLElement, field: 'submitKey' | 'newlineKey' | 'captureKey'): void {
     const p = this.plugin;
-    new Setting(panel).setName(p.t(field)).addButton(control => {
+    const capture = field === 'captureKey';
+    const setting = new Setting(panel).setName(p.t(capture ? 'quickCapture' : field));
+    const status = (): void => { if (capture) setting.setDesc(p.t(Platform.isMobile ? 'quickShortcutHint' : 'captureScopeHint') + ' ' + p.t(p.captureStatus())); };
+    status();
+    if (capture) setting.settingEl.classList.add('xj-capture-setting');
+    setting.addButton(control => {
       let recording = false;
-      const label = (): void => { control.setButtonText(shortcutLabel(p.prefs[field], panel.ownerDocument)); control.buttonEl.setAttribute('aria-pressed', 'false'); };
+      const label = (): void => { control.setButtonText(p.prefs[field] ? shortcutLabel(p.prefs[field], panel.ownerDocument) : p.t('captureOff')); control.buttonEl.setAttribute('aria-pressed', 'false'); };
+      const resume = (): void => { this.resumeCapture?.(); this.resumeCapture = null; };
       label(); control.buttonEl.classList.add('xj-shortcut-recorder');
-      control.onClick(() => { recording = true; control.setButtonText(p.t('pressShortcut')); control.buttonEl.setAttribute('aria-pressed', 'true'); control.buttonEl.focus(); });
-      control.buttonEl.addEventListener('blur', () => { recording = false; label(); });
+      control.onClick(() => { if (capture && !recording) this.resumeCapture = p.pauseGlobalCapture(); recording = true; control.setButtonText(p.t('pressShortcut')); control.buttonEl.setAttribute('aria-pressed', 'true'); control.buttonEl.focus(); });
+      control.buttonEl.addEventListener('blur', () => { if (recording) { recording = false; resume(); label(); } });
       control.buttonEl.addEventListener('keydown', event => {
         if (!recording || event.isComposing || event.keyCode === 229) return;
         event.preventDefault(); event.stopPropagation();
-        if (event.key === 'Escape') { recording = false; label(); return; }
+        if (event.key === 'Escape') { recording = false; resume(); label(); return; }
         if (event.repeat || ['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return;
         const chord = eventShortcut(event, (Platform.isMacOS || Platform.isIosApp));
         if (!chord) { p.report(new MemoError('invalidShortcut')); return; }
-        if (chord === p.prefs[field === 'submitKey' ? 'newlineKey' : 'submitKey']) { p.report(new MemoError('shortcutConflict')); return; }
+        if (capture && !normalizeGlobalShortcut(chord)) { p.report(new MemoError('invalidGlobalShortcut')); return; }
+        if (!capture && chord === p.prefs[field === 'submitKey' ? 'newlineKey' : 'submitKey']) { p.report(new MemoError('shortcutConflict')); return; }
         recording = false; control.setDisabled(true);
-        void p.updateSettings({ [field]: chord }).catch(error => p.report(error)).finally(() => { label(); control.setDisabled(false); });
+        resume();
+        void p.updateSettings({ [field]: chord }).catch(error => p.report(error)).finally(() => { label(); control.setDisabled(false); status(); });
       });
     });
+    if (capture) {
+      if (!Platform.isMobile) setting.addToggle(control => {
+        control.setValue(p.prefs.captureGlobal).setTooltip(p.t('captureGlobal'));
+        control.toggleEl.setAttribute('aria-label', p.t('captureGlobal'));
+        const scope = element(control.toggleEl.parentElement!, 'span', 'xj-capture-scope');
+        element(scope, 'span', 'xj-capture-scope-label', p.t('captureGlobal')); scope.append(control.toggleEl);
+        control.onChange(value => {
+          control.setDisabled(true);
+          void this.flush().then(() => p.updateSettings({ captureGlobal: value })).catch(error => p.report(error)).finally(() => { control.setValue(p.prefs.captureGlobal); control.setDisabled(false); status(); });
+        });
+      });
+      setting.addExtraButton(control => control.setIcon('x').setTooltip(p.t('clear')).onClick(() => this.change({ captureKey: '' }, true)));
+    }
   }
   private general(panel: HTMLElement): void {
     const p = this.plugin;
@@ -329,7 +443,7 @@ export class XiaojiSettings extends PluginSettingTab {
       .addExtraButton(control => control.setIcon('arrow-right-left').setTooltip(p.t('swapInputKeys')).onClick(() => this.change({ submitKey: p.prefs.newlineKey, newlineKey: p.prefs.submitKey }, true)))
       .addExtraButton(control => control.setIcon('rotate-ccw').setTooltip(p.t('restoreDefaults')).onClick(() => this.change({ submitKey: 'Shift-Enter', newlineKey: 'Enter' }, true)));
     this.shortcutSetting(panel, 'submitKey'); this.shortcutSetting(panel, 'newlineKey');
-    new Setting(panel).setName(p.t('quickCapture')).setDesc(p.t('quickShortcutHint')).addButton(control => control.setButtonText(p.t('configureHotkeys')).onClick(() => p.openHotkeys()));
+    this.shortcutSetting(panel, 'captureKey');
     new Setting(panel).setName(p.t('quickPin')).addToggle(control => control.setValue(p.prefs.quickPin).onChange(value => this.change({ quickPin: value })));
     new Setting(panel).setName(p.t('language')).addDropdown(dropdown =>
       dropdown.addOption('auto', p.t('auto')).addOption('zh', '简体中文').addOption('en', 'English')

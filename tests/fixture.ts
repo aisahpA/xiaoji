@@ -7,9 +7,11 @@ import { displayDate } from '../src/core/dates';
 import { resolveLanguage, translate, type MessageKey } from '../src/i18n';
 import { TFile } from './obsidian-mock';
 import type { Draft, FilePort, Settings } from '../src/core/types';
+import { createAIBackend } from '../src/ui/ai-backend';
 
 export class FixtureFiles implements FilePort {
   data = new Map<string, string>();
+  revision?: (path: string) => string | number;
   async listMarkdown(): Promise<string[]> { return [...this.data.keys()]; }
   async read(path: string): Promise<string> { if (!this.data.has(path)) throw Error('Missing file'); return this.data.get(path)!; }
   async exists(path: string): Promise<boolean> { return this.data.has(path); }
@@ -83,11 +85,14 @@ export async function makeFixture(overrides: Partial<Settings> = {}): Promise<{ 
     clipboard: async () => undefined,
     openSource: async () => undefined,
     openQuick: async () => undefined, openHotkeys: () => undefined,
+    captureStatus: () => !data.settings.captureKey ? 'captureOff' : data.settings.captureGlobal ? 'captureReady' : 'captureLocal',
+    pauseGlobalCapture: () => () => undefined,
     watchQuickBounds: () => () => undefined,
     quickWindowControls: () => false, quickWindowMaximized: () => false, quickWindowAction: () => undefined,
     windowPinState: () => false, toggleWindowPin: () => false,
     recoverAttachment: () => undefined,
     apiKey: () => '',
+    aiBackend: () => createAIBackend(data.settings, plugin.apiKey()),
     setApiKey: () => undefined,
     persist: async () => undefined,
     addAttachment: async () => '![[附件.png]]',

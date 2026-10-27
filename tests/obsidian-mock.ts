@@ -205,6 +205,7 @@ class Toggle {
   toggleEl: HTMLInputElement;
   constructor(parent: HTMLElement) { this.toggleEl = document.createElement('input'); this.toggleEl.type = 'checkbox'; parent.append(this.toggleEl); }
   setValue(value: boolean): this { this.toggleEl.checked = value; return this; }
+  setDisabled(value: boolean): this { this.toggleEl.disabled = value; return this; }
   setTooltip(value: string): this { this.toggleEl.title = value; return this; }
   onChange(callback: (value: boolean) => unknown): this { this.toggleEl.addEventListener('change', () => callback(this.toggleEl.checked)); return this; }
 }
@@ -227,10 +228,11 @@ class Slider {
   onChange(callback: (value: number) => unknown): this { this.sliderEl.addEventListener('input', () => callback(Number(this.sliderEl.value))); return this; }
 }
 export class Setting {
-  settingEl: HTMLElement; nameEl: HTMLElement; private description: HTMLElement; private control: HTMLElement;
+  settingEl: HTMLElement; nameEl: HTMLElement; infoEl: HTMLElement; private description: HTMLElement; private control: HTMLElement;
   constructor(parent: HTMLElement) {
     this.settingEl = document.createElement('div'); this.settingEl.className = 'setting-item'; parent.append(this.settingEl);
     const info = document.createElement('div'); info.className = 'setting-item-info'; this.settingEl.append(info);
+    this.infoEl = info;
     this.nameEl = document.createElement('div'); this.nameEl.className = 'setting-item-name'; info.append(this.nameEl);
     this.description = document.createElement('div'); this.description.className = 'setting-item-description'; info.append(this.description);
     this.control = document.createElement('div'); this.control.className = 'setting-item-control'; this.settingEl.append(this.control);

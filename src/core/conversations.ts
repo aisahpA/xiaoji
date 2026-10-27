@@ -6,6 +6,7 @@ import { MemoError, type FilePort, type Memo } from './types';
 export interface ChatSource { number: number; memo: Memo; content: string; }
 export interface ChatTurn {
   id: string; question: string; answer: string; sources: ChatSource[];
+  imported?: boolean;
   query?: { action?: 'count' | 'list' | 'answer'; total: number; shown: number; scope: string };
   status: 'pending' | 'complete' | 'interrupted' | 'failed'; createdAt: string;
 }
@@ -27,9 +28,10 @@ function serializeLegacy(chat: Conversation, deletedAt?: string): string {
 /** Human-readable Markdown only. Machine state lives outside the note. */
 export function serializeConversation(chat: Conversation): string {
   const title = chat.title.replace(/[\r\n]/g, ' ');
-  return '# ' + title + '\n\n' + chat.turns.map(turn => '## ' + turn.createdAt + '\n\n### Question\n\n' + turn.question +
+  const markdown = '# ' + title + '\n\n' + chat.turns.map(turn => '## ' + turn.createdAt + '\n\n### Question\n\n' + turn.question +
     '\n\n### Answer\n\n' + turn.answer + (turn.query ? '\n\n> ' + turn.query.scope : '') + '\n\n' +
     turn.sources.map(source => '#### [' + source.number + '] @' + source.memo.id + '\n\n' + source.memo.body).join('\n\n')).join('\n\n') + '\n';
+  return markdown.replace(/\r\n/g, '\n');
 }
 export interface ConversationStatePort { read(id: string): Promise<string | null>; write(id: string, raw: string): Promise<void>; remove(id: string): Promise<void>; }
 function decode(raw: string): unknown {
@@ -45,7 +47,7 @@ function validate(value: unknown): Conversation {
   for (const turn of chat.turns) {
     if (!validId(turn.id) || ids.has(turn.id) || typeof turn.question !== 'string' || typeof turn.answer !== 'string' ||
       typeof turn.createdAt !== 'string' || !['pending', 'complete', 'interrupted', 'failed'].includes(turn.status) ||
-      !Array.isArray(turn.sources)) throw new MemoError('chatInvalid');
+      !Array.isArray(turn.sources) || turn.imported !== undefined && typeof turn.imported !== 'boolean') throw new MemoError('chatInvalid');
     if (turn.query && ((turn.query.action !== undefined && !['count', 'list', 'answer'].includes(turn.query.action)) || !Number.isInteger(turn.query.total) || turn.query.total < 0 || !Number.isInteger(turn.query.shown) || turn.query.shown < 0 || turn.query.shown > turn.query.total || typeof turn.query.scope !== 'string')) throw new MemoError('chatInvalid');
     ids.add(turn.id);
     for (const source of turn.sources) if (!source?.memo || !/^\d{14}(?:\d{3})?$/.test(source.memo.id) ||
@@ -106,17 +108,28 @@ export class Conversations {
     if (!version || version.chat.id !== id) throw new MemoError('chatInvalid');
     return parseConversation(raw, version.chat);
   }
-  async create(title: string): Promise<Conversation> {
+  async create(title: string, turns: ChatTurn[] = []): Promise<Conversation> {
     return this.enqueue(async () => {
       let id: string;
       id = timestamp();
       while (await this.files.exists(this.path(id)) || await this.readState(id)) { await sleep(2); id = timestamp(); }
       const date = new Date().toISOString();
-      const chat: Conversation = { id, title: title.slice(0, 100), createdAt: date, updatedAt: date, turns: [] };
+      const chat: Conversation = { id, title: title.slice(0, 100), createdAt: date, updatedAt: date, turns };
+      validate(chat);
       chat.raw = serializeConversation(chat); await this.writeState(id, this.stateText(chat, chat.raw));
       try { await this.files.create(this.path(id), chat.raw); } catch (error) { await this.removeState(id); throw error; }
       return chat;
     });
+  }
+  async recover(path: string, label: string): Promise<Conversation> {
+    const roots = [...new Set([this.root(), ...this.history().map(folder => normalizeFolder(folder) + '/')])];
+    if (!roots.some(root => path.startsWith(root) && /^\d{17}\.md$/.test(path.slice(root.length)))) throw new MemoError('chatInvalid');
+    const raw = await this.files.read(path);
+    if (raw.length > 2 * 1024 * 1024) throw new MemoError('chatRecoverTooLarge');
+    if (!raw.trim()) throw new MemoError('chatInvalid');
+    const title = /^# ([^\r\n]+)/m.exec(raw)?.[1]?.slice(0, 100) || label;
+    // Keep the source byte-for-byte; imported text is context, never reconstructed evidence.
+    return this.create(title, [{ id: timestamp(), question: label, answer: raw, sources: [], imported: true, status: 'complete', createdAt: new Date().toISOString() }]);
   }
   async list(): Promise<{ chats: Conversation[]; damaged: string[] }> {
     const root = this.root(), chats: Conversation[] = [], damaged: string[] = [];

@@ -229,6 +229,21 @@
 .xj-editor-source .cm-placeholder { color: var(--text-faint); }
 .xj-editor-source .cm-tooltip { background: var(--background-primary); color: var(--text-normal); border-color: var(--background-modifier-border); }
 .xj-editor-source .cm-selectionBackground { background: var(--text-selection) !important; }
+.xj-editor-source .cm-content { caret-color: var(--caret-color, var(--text-normal)); }
+.xj-editor-source .cm-cursor, .xj-editor-source .cm-dropCursor { border-left-color: var(--caret-color, var(--text-normal)); }
+.xj-connection-status { color: var(--text-muted); font-size: var(--font-ui-small); line-height: 1.5; margin-top: 6px; overflow-wrap: anywhere; }
+.xj-connection-status:empty { display: none; }
+.xj-connection-status.is-error { color: var(--text-error); }
+.xj-settings .dropdown { max-width: min(100%, 280px); }
+.xj-settings .xj-capture-setting .setting-item-control { gap: 10px; flex: 0 0 auto; flex-wrap: nowrap; }
+.xj-capture-setting .setting-item-info { flex: 1 1 auto; min-width: 0; }
+.xj-capture-scope { display: inline-flex; gap: 8px; align-items: center; white-space: nowrap; }
+.xj-capture-scope-label { color: var(--text-muted); font-size: var(--font-ui-small); white-space: nowrap; }
+.xj-codex-details { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 20px; padding: 12px 0; font-size: var(--font-ui-small); }
+.xj-codex-details:empty { display: none; }
+.xj-codex-details dt { color: var(--text-muted); }
+.xj-codex-details dd { margin: 0; overflow-wrap: anywhere; user-select: text; }
+.xj-connection-status { white-space: pre-line; }
 .xj-composer-actions { justify-content: space-between; padding: 3px 10px 8px; }
 .xj-submit { min-width: 64px; font-size: var(--font-ui-small); border-radius: 7px; }
 .xj-editor-preview { padding: 12px 16px; min-height: 70px; overflow: visible; max-height: none; }

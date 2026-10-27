@@ -16,6 +16,10 @@ import { MemoView, QuickView, VIEW_TYPE, QUICK_TYPE } from './ui/view';
 import { XiaojiSettings } from './ui/settings';
 import { ReviewModal } from './ui/modals';
 import { ReferencePreview } from './ui/references';
+import { GlobalCaptureShortcut, desktopShortcuts } from './core/global-shortcut';
+import { CodexClient, type CodexInfo } from './core/codex';
+import { createAIBackend, type AIBackend } from './ui/ai-backend';
+import { captureKeyFromHotkey, eventShortcut } from './core/shortcuts';
 
 interface QuickNativeWindow {
   isAlwaysOnTop(): boolean; setAlwaysOnTop(value: boolean): void;
@@ -87,8 +91,16 @@ export default class XiaojiPlugin extends Plugin {
   private settingsTail: Promise<unknown> = Promise.resolve();
   private sessionApiKey = '';
   private tagCache: string[] | null = null;
+  private tagCacheRecords: Memo[] | null = null;
   private stopped = false;
   private openingQuick: Promise<void> | null = null;
+  private refreshPending: Promise<void> | null = null;
+  private refreshRequested = false;
+  private codexClient: CodexClient | null = null;
+  private capturePauses = 0;
+  private captureKeys = new GlobalCaptureShortcut(() => Platform.isMobile ? null : desktopShortcuts(), () => {
+    if (!this.stopped) void this.openQuick().catch(error => this.report(error));
+  });
   loading = true;
   readError = false;
 
@@ -139,7 +151,8 @@ export default class XiaojiPlugin extends Plugin {
     this.addRibbonIcon('notebook-pen', this.t('openWorkspace'), () => { void this.openView().catch(error => this.report(error)); });
     this.addCommand({ id: 'open', name: this.t('openWorkspace'), callback: () => { void this.openView().catch(error => this.report(error)); } });
     this.addCommand({ id: 'capture', name: this.t('quickCapture'), callback: () => { void this.openQuick().catch(error => this.report(error)); } });
-    this.migrateQuickHotkeys();
+    await this.migrateQuickHotkeys();
+    this.installCaptureKeys();
     this.addCommand({ id: 'search', name: this.t('search'), callback: () => { void this.openView().then(view => view.focusSearch()).catch(error => this.report(error)); } });
     this.addCommand({ id: 'recycle-bin', name: this.t('trash'), callback: () => { this.showTrash(); } });
     this.addCommand({ id: 'review', name: this.t('review'), checkCallback: checking => {
@@ -165,11 +178,16 @@ export default class XiaojiPlugin extends Plugin {
     this.registerEvent(this.app.vault.on('create', changed));
     this.registerEvent(this.app.vault.on('delete', changed));
     this.registerEvent(this.app.vault.on('rename', changed));
-    this.app.workspace.onLayoutReady(() => { void this.refresh().catch(error => this.report(error)); });
+    this.app.workspace.onLayoutReady(() => {
+      if (this.stopped) return;
+      if (!Platform.isMobile) { try { this.captureKeys.bind(this.globalCaptureChord()); } catch (error) { this.report(error); } }
+      void this.refresh().catch(error => this.report(error));
+    });
   }
 
   onunload(): void {
     this.stopped = true;
+    this.captureKeys.dispose(); this.codexClient?.dispose(); this.codexClient = null;
     if (this.refreshTimer) window.clearTimeout(this.refreshTimer);
     this.subscribers.clear();
     this.sessionApiKey = '';
@@ -186,10 +204,61 @@ export default class XiaojiPlugin extends Plugin {
     this.refreshTimer = window.setTimeout(() => { this.refreshTimer = null; void this.refresh().catch(error => this.report(error)); }, 180);
   }
   async refresh(): Promise<void> {
-    try { await this.repo.scan(); this.tagCache = null; this.readError = false; }
-    catch (error) { this.readError = true; console.error('[xiaoji] Index refresh failed', error); throw new MemoError('readFailed'); }
-    finally { this.loading = false; this.notify(); }
+    if (this.refreshTimer) { window.clearTimeout(this.refreshTimer); this.refreshTimer = null; }
+    this.refreshRequested = true;
+    if (this.refreshPending) return this.refreshPending;
+    this.refreshPending = (async () => {
+      try {
+        do {
+          this.refreshRequested = false;
+          const previous = this.repo.records;
+          await this.repo.scan();
+          if (previous !== this.repo.records) this.tagCache = null;
+          this.readError = false;
+        } while (this.refreshRequested && !this.stopped);
+      } catch (error) { this.readError = true; console.error('[xiaoji] Index refresh failed', error); throw new MemoError('readFailed'); }
+      finally { this.loading = false; this.notify(); }
+    })().finally(() => { this.refreshPending = null; });
+    return this.refreshPending;
   }
+
+  private globalCaptureChord(settings = this.prefs): string { return settings.captureGlobal && !this.capturePauses ? settings.captureKey : ''; }
+  captureStatus(): ReturnType<GlobalCaptureShortcut['status']> { return !this.prefs.captureKey ? 'captureOff' : !this.prefs.captureGlobal || Platform.isMobile ? 'captureLocal' : this.captureKeys.status(this.prefs.captureKey); }
+  pauseGlobalCapture(): () => void {
+    this.capturePauses++;
+    this.captureKeys.bind('');
+    let resumed = false;
+    return () => { if (resumed) return; resumed = true; this.capturePauses--; if (!this.stopped) { try { this.captureKeys.bind(this.globalCaptureChord()); } catch (error) { this.report(error); } } };
+  }
+  private installCaptureKeys(): void {
+    const documents = new Map<Document, () => void>();
+    const bind = (doc: Document): void => {
+      if (documents.has(doc)) return;
+      const keydown = (event: KeyboardEvent): void => {
+        if (this.stopped || this.capturePauses || this.prefs.captureGlobal && !Platform.isMobile || !this.prefs.captureKey || event.repeat || event.defaultPrevented) return;
+        if (eventShortcut(event, Platform.isMacOS || Platform.isIosApp) !== this.prefs.captureKey) return;
+        event.preventDefault(); event.stopImmediatePropagation(); void this.openQuick().catch(error => this.report(error));
+      };
+      doc.addEventListener('keydown', keydown, true); documents.set(doc, () => doc.removeEventListener('keydown', keydown, true));
+    };
+    bind(this.app.workspace.containerEl.ownerDocument);
+    this.app.workspace.iterateAllLeaves(leaf => bind(leaf.view.containerEl.ownerDocument));
+    this.registerEvent(this.app.workspace.on('window-open', (_host, win) => bind(win.document)));
+    this.registerEvent(this.app.workspace.on('window-close', (_host, win) => { documents.get(win.document)?.(); documents.delete(win.document); }));
+    this.register(() => { for (const dispose of documents.values()) dispose(); documents.clear(); });
+  }
+  private codex(): CodexClient {
+    if (Platform.isMobile) throw new MemoError('codexDesktopOnly');
+    return this.codexClient ??= new CodexClient(this.prefs.codexPath);
+  }
+  inspectCodex(): Promise<CodexInfo> { return this.codex().inspect(); }
+  async verifyCodexModel(signal: AbortSignal): Promise<void> {
+    await this.codex().complete({ model: this.prefs.codexModel, stream: true, messages: [
+      { role: 'system', content: 'This is a connection test. Reply only OK. Do not use tools.' },
+      { role: 'user', content: 'Reply OK.' },
+    ] }, signal, () => undefined);
+  }
+  aiBackend(): AIBackend { return createAIBackend(this.prefs, this.prefs.aiProvider === 'api' ? this.apiKey() : '', this.prefs.aiProvider === 'codex' ? this.codex() : undefined); }
 
   updateSettings(update: Partial<Settings> | ((current: Settings) => Partial<Settings>), validateStorage = false): Promise<void> {
     const patch = typeof update === 'function' ? update : JSON.parse(JSON.stringify(update)) as Partial<Settings>;
@@ -205,9 +274,16 @@ export default class XiaojiPlugin extends Plugin {
     if (notes === chats || notes.startsWith(chats + '/')) throw new MemoError('invalidFolder');
     if (validateStorage) validateStorageSettings(next);
     const previous = this.data.settings;
+    const changedKey = (next.captureKey !== previous.captureKey || next.captureGlobal !== previous.captureGlobal) && !Platform.isMobile;
+    if (changedKey) this.captureKeys.bind(this.globalCaptureChord(next));
     this.data.settings = next;
     try { await this.persist(); }
-    catch (error) { this.data.settings = previous; throw error; }
+    catch (error) {
+      this.data.settings = previous;
+      if (changedKey) { try { this.captureKeys.bind(this.globalCaptureChord(previous)); } catch { /* Status reflects a key that could not be restored. */ } }
+      throw error;
+    }
+    if (next.codexPath !== previous.codexPath || next.aiProvider !== previous.aiProvider || !next.aiEnabled && previous.aiEnabled) { this.codexClient?.dispose(); this.codexClient = null; }
     this.tagCache = null;
     if (next.folder !== previous.folder || next.chatFolder !== previous.chatFolder) await this.refresh();
     else this.notify();
@@ -251,7 +327,8 @@ export default class XiaojiPlugin extends Plugin {
   sourcePath(): string { return fileForDate(new Date(), this.prefs); }
 
   tags(): string[] {
-    if (this.tagCache) return this.tagCache;
+    if (this.tagCache && this.tagCacheRecords === this.repo.records) return this.tagCache;
+    this.tagCacheRecords = this.repo.records;
     const tags = new Set(this.repo.records.flatMap(memo => memo.tags));
     this.tagCache = [...tags].sort((a, b) => a.localeCompare(b));
     return this.tagCache;
@@ -292,21 +369,29 @@ export default class XiaojiPlugin extends Plugin {
     return leaf.view as MemoView;
   }
 
-  private migrateQuickHotkeys(): void {
-    // Keep the user's explicit bindings; only retire the duplicate command.
+  private async migrateQuickHotkeys(): Promise<void> {
     const manager = (this.app as App & { hotkeyManager?: {
       customKeys?: Record<string, { modifiers: string[]; key: string }[]>;
       setHotkeys?(id: string, keys: { modifiers: string[]; key: string }[]): void;
       removeHotkeys?(id: string): void; save?(): Promise<void>;
     } }).hotkeyManager;
-    const legacy = manager?.customKeys?.['xiaoji:quick-window'];
-    if (!legacy || !manager?.setHotkeys || !manager.removeHotkeys || !manager.save) return;
-    const current = manager.customKeys?.['xiaoji:capture'];
-    const keys = [...(current ?? []), ...legacy].filter((key, index, all) =>
-      all.findIndex(other => other.key === key.key && [...other.modifiers].sort().join() === [...key.modifiers].sort().join()) === index);
-    manager.setHotkeys('xiaoji:capture', keys);
-    manager.removeHotkeys('xiaoji:quick-window');
-    void manager.save().catch(error => this.report(error));
+    if (!manager?.setHotkeys || !manager.removeHotkeys || !manager.save) return;
+    const ids = ['xiaoji:capture', 'xiaoji:quick-window'];
+    const existing = ids.flatMap(id => manager.customKeys?.[id] ?? []);
+    if (!existing.length) return;
+    try {
+      if (!this.prefs.captureKey) {
+        const chord = existing.map(captureKeyFromHotkey).find((key): key is string => Boolean(key));
+        if (!chord) return;
+        const previous = this.prefs.captureKey;
+        this.prefs.captureKey = chord;
+        try { await this.persist(); } catch (error) { this.prefs.captureKey = previous; throw error; }
+      }
+      const before = ids.map(id => ({ id, keys: manager.customKeys?.[id] }));
+      for (const id of ids) manager.removeHotkeys(id);
+      try { await manager.save(); }
+      catch (error) { for (const item of before) if (item.keys) manager.setHotkeys(item.id, item.keys); throw error; }
+    } catch (error) { this.report(error); }
   }
   quickWindowControls(leaf: WorkspaceLeaf): boolean {
     const native = this.nativeWindow(leaf);
@@ -334,11 +419,7 @@ export default class XiaojiPlugin extends Plugin {
     const existing = this.app.workspace.getLeavesOfType(QUICK_TYPE)[0];
     if (existing) {
       await this.app.workspace.revealLeaf(existing);
-      const native = this.nativeWindow(existing);
-      if (native?.isMinimized?.()) native.restore?.();
-      native?.show?.(); native?.focus?.();
-      existing.view.containerEl.ownerDocument.defaultView?.focus();
-      (existing.view as QuickView).focusEditor(); return;
+      this.focusQuick(existing); return;
     }
     let areas: WindowBounds[] = [];
     try {
@@ -370,6 +451,15 @@ export default class XiaojiPlugin extends Plugin {
       }
     }
     if (native && this.prefs.quickPin && this.windowPinState(leaf) !== true) this.toggleWindowPin(leaf);
+    this.focusQuick(leaf);
+  }
+  private focusQuick(leaf: WorkspaceLeaf): void {
+    const native = this.nativeWindow(leaf);
+    try {
+      if (native?.isMinimized?.()) native.restore?.();
+      native?.show?.(); native?.focus?.();
+    } catch { /* The document focus path remains available without a native bridge. */ }
+    leaf.view.containerEl.ownerDocument.defaultView?.focus();
     (leaf.view as QuickView).focusEditor();
   }
   watchQuickBounds(leaf: WorkspaceLeaf): () => void {
