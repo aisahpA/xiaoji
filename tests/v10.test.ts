@@ -66,7 +66,7 @@ describe('stable search, editing and per-tab layout', () => {
   it('keeps the input, focus and IME composition intact during unrelated settings and resize', async () => {
     const { root, view, plugin } = await setup(); view.focusSearch(); const input = root.querySelector<HTMLInputElement>('.xj-search')!; input.focus(); input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true })); setInput(input, 'jiao');
     await plugin.updateSettings({ gap: 19 }); ResizeMock.latest.resize(480); expect(root.querySelector('.xj-search')).toBe(input); expect(input.value).toBe('jiao'); expect(document.activeElement).toBe(input); expect(view.getState().query).toBe('');
-    input.value = '教学'; input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })); await settle(); expect(view.getState().query).toBe('教学'); expect(root.querySelectorAll('.xj-card')).toHaveLength(2);
+    input.value = '教学'; input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true })); await new Promise(resolve => setTimeout(resolve, 250)); expect(view.getState().query).toBe('教学'); expect(root.querySelectorAll('.xj-card')).toHaveLength(2);
   });
   it('filters through the compact tag panel and retains conditions across ordinary views', async () => {
     const { root, view } = await setup(); view.focusSearch(); root.querySelector<HTMLButtonElement>('.xj-search-line button[aria-label="筛选"]')!.click();

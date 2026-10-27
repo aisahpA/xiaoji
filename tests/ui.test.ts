@@ -180,7 +180,7 @@ describe('quiet memo navigation', () => {
     const { root } = await setup();
     const input = root.querySelector<HTMLInputElement>('.xj-search')!;
     input.value = '教学 反馈'; input.dispatchEvent(new Event('input', { bubbles: true }));
-    await flush();
+    await new Promise(resolve => setTimeout(resolve, 250));
     expect(root.querySelectorAll('.xj-card')).toHaveLength(1);
     expect(root.querySelector('.xj-card-body')!.textContent).toContain('教学反馈');
   });

@@ -106,6 +106,7 @@ export class MemoView extends ItemView {
   private measuredCards = new Set<string>();
   private lastFoldHeight = 0;
   private cardByEl = new WeakMap<HTMLElement, Card>();
+  private feedTimer: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: XiaojiPlugin) { super(leaf); this.plugin = plugin; }
   getViewType(): string { return VIEW_TYPE; }
@@ -145,9 +146,12 @@ export class MemoView extends ItemView {
     this.sorter?.destroy(); this.sorter = new NavigationSort(this.root, (source, target, after) => this.reorder(source, target, after), (item, direction) => this.stepOrder(item, direction), error => this.plugin.report(error));
     this.toolbar = element(this.root, 'header', 'xj-toolbar');
     this.searchPanel = new SearchPanel(this.root, this.plugin, { query: this.query, tags: this.filterTags, all: this.allScope, archived: this.includeArchived }, state => {
+      const queryChanged = state.query !== this.query;
       this.rememberPosition(); this.query = state.query; this.filterTags = state.tags; this.allScope = state.all; this.includeArchived = state.archived;
-      this.limit = 40; this.selected.clear(); this.saveLayout(); this.scheduleFeed();
-    }, () => { this.searchActive = false; this.query = ''; this.filterTags = []; this.allScope = false; this.includeArchived = false; this.saveLayout(); this.render(true); });
+      this.limit = 40; this.selected.clear(); this.saveLayout();
+      // Only debounce text input; tag/scope/archive toggles are discrete clicks and should render immediately.
+      if (queryChanged) this.scheduleFeedSoon(); else { this.cancelFeedTimer(); this.scheduleFeed(); }
+    }, () => { this.cancelFeedTimer(); this.searchActive = false; this.query = ''; this.filterTags = []; this.allScope = false; this.includeArchived = false; this.saveLayout(); this.render(true); });
     const workspace = element(this.root, 'div', 'xj-workspace');
     this.sidebarEl = element(workspace, 'aside', 'xj-sidebar');
     this.sidebarEl.setAttribute('aria-label', this.plugin.t('navigation'));
@@ -394,6 +398,15 @@ export class MemoView extends ItemView {
     const win = this.root.ownerDocument.defaultView;
     if (win) this.feedFrame = win.requestAnimationFrame(() => { this.feedFrame = null; if (!this.closed) this.renderFeed(); });
   }
+
+  /** Debounced feed refresh for search typing: state updates immediately, render is delayed 80ms.
+   *  80ms coalesces rapid backspace/delete (≈30ms interval) without adding perceptible lag to normal typing. */
+  private scheduleFeedSoon(): void {
+    this.cancelFeedTimer();
+    this.feedTimer = window.setTimeout(() => { this.feedTimer = null; this.scheduleFeed(); }, 80);
+  }
+
+  private cancelFeedTimer(): void { if (this.feedTimer !== null) { window.clearTimeout(this.feedTimer); this.feedTimer = null; } }
 
   private render(force = false): void {
     if (this.closed || !this.root) return;
@@ -950,6 +963,7 @@ export class MemoView extends ItemView {
     void this.plugin.flushDrafts?.().catch(error => this.plugin.report(error));
     this.marqueeCleanup?.(); this.marqueeCleanup = null;
     this.searchPanel?.destroy();
+    this.cancelFeedTimer();
     if (this.feedFrame !== null) this.root.ownerDocument.defaultView?.cancelAnimationFrame(this.feedFrame); this.feedFrame = null;
     if (this.geometryFrame !== null) this.root.ownerDocument.defaultView?.cancelAnimationFrame(this.geometryFrame);
     window.clearTimeout(this.revealTimer);
