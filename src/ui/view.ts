@@ -1021,6 +1021,7 @@ export class QuickView extends ItemView {
       const mainDocument = this.app.workspace.containerEl?.ownerDocument ?? document;
       if (doc === mainDocument) this.windowCleanup = null;
       else {
+        this.plugin.syncQuickWindow(this.leaf);
         const bounds = this.plugin.watchQuickBounds(this.leaf);
         const chrome = compactQuickWindow(doc, this.plugin.quickWindowControls(this.leaf));
         // Cmd+W in this dedicated window hides the reusable popout instead of tearing down

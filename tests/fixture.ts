@@ -89,6 +89,7 @@ export async function makeFixture(overrides: Partial<Settings> = {}): Promise<{ 
     openSource: async () => undefined,
     openQuick: async () => undefined, openHotkeys: () => undefined,
     watchQuickBounds: () => () => undefined,
+    syncQuickWindow: () => undefined,
     quickWindowControls: () => false, quickWindowMaximized: () => false, quickWindowAction: () => undefined,
     windowPinState: () => false, toggleWindowPin: () => false,
     recoverAttachment: () => undefined,

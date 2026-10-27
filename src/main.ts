@@ -458,6 +458,22 @@ export default class XiaojiPlugin extends Plugin {
     return [{ x: screen.availLeft ?? 0, y: screen.availTop ?? 0, width: screen.availWidth || 1200, height: screen.availHeight || 800 }];
   }
 
+  /**
+   * Re-apply native-window chrome whenever the quick view mounts in a separate popout.
+   * Obsidian restores saved popout leaves on relaunch, which would otherwise surface the
+   * capture window unrequested and with native traffic lights visible. If the window was
+   * not opened through openQuick(), hide it so it does not steal focus on startup; the next
+   * openQuick() reuses the existing hidden leaf instead of creating a new popout.
+   */
+  syncQuickWindow(leaf: WorkspaceLeaf): void {
+    const native = this.nativeWindow(leaf);
+    if (!native) return;
+    this.configureQuickWindow(native);
+    if (this.openingQuick === null) {
+      try { native.hide?.(); } catch { /* The native window may already be closing. */ }
+    }
+  }
+
   /** Keep the quick window a plain floating panel: no native traffic lights, no full screen, visible on every Space. */
   private configureQuickWindow(native: QuickNativeWindow | null): void {
     if (!native) return;
