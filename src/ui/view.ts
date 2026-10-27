@@ -102,6 +102,10 @@ export class MemoView extends ItemView {
   private restoreScroll = 0;
   private positions = new Map<string, { scroll: number; limit: number }>();
   private completedFeedback = new Map<string, { memo: Memo; scope: string; timer: number }>();
+  private feedSignature = '';
+  private measuredCards = new Set<string>();
+  private lastFoldHeight = 0;
+  private cardByEl = new WeakMap<HTMLElement, Card>();
 
   constructor(leaf: WorkspaceLeaf, plugin: XiaojiPlugin) { super(leaf); this.plugin = plugin; }
   getViewType(): string { return VIEW_TYPE; }
@@ -192,10 +196,18 @@ export class MemoView extends ItemView {
       }
     }, { root: this.scroller, rootMargin: '1000px' });
     this.cardObserver = new ResizeObserver(entries => {
-      if (this.plugin.prefs.layout !== 'waterfall') return;
-      const gap = densityValues(this.plugin.prefs).gap;
+      const height = densityValues(this.plugin.prefs).foldHeight;
       for (const entry of entries) {
         const node = entry.target as HTMLElement;
+        const card = this.cardByEl.get(node);
+        if (card) {
+          const folded = card.body.scrollHeight > height + 6;
+          card.body.classList.toggle('can-fold', folded);
+          card.fold.hidden = !folded;
+          this.measuredCards.add(card.memo.key);
+        }
+        if (this.plugin.prefs.layout !== 'waterfall') continue;
+        const gap = densityValues(this.plugin.prefs).gap;
         const span = Math.max(1, Math.ceil(((entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height) + gap) / 4));
         const host = node.parentElement;
         if (host && host.style.gridRowEnd !== 'span ' + span) host.style.gridRowEnd = 'span ' + span;
@@ -645,13 +657,28 @@ export class MemoView extends ItemView {
 
   private measureCards(): void {
     const height = densityValues(this.plugin.prefs).foldHeight;
-    const measurements = [...this.cards.values()].map(card => ({ card, folded: card.body.scrollHeight > height + 6 }));
-    for (const { card, folded } of measurements) { card.body.classList.toggle('can-fold', folded); card.fold.hidden = !folded; }
+    if (height !== this.lastFoldHeight) { this.measuredCards.clear(); this.lastFoldHeight = height; }
+    for (const card of this.cards.values()) {
+      if (this.measuredCards.has(card.memo.key)) continue;
+      const folded = card.body.scrollHeight > height + 6;
+      card.body.classList.toggle('can-fold', folded);
+      card.fold.hidden = !folded;
+      this.measuredCards.add(card.memo.key);
+    }
   }
 
   private renderFeed(): void {
     if (!this.feed || this.closed) return;
     const p = this.plugin;
+    const sig = JSON.stringify([
+      this.recordsRevision, this.stateKey(), this.limit, this.selectionMode,
+      [...this.selected].sort().join('|'), [...this.expanded].sort().join('|'),
+      [...this.completedFeedback.keys()].sort().join('|'), this.width, densityValues(p.prefs).foldHeight,
+      p.locale, p.prefs.dateFormat, p.prefs.tasksIncludeCompleted,
+      p.readError ? 1 : 0, p.loading ? 1 : 0, p.repo.duplicates.size,
+    ]);
+    if (sig === this.feedSignature) return;
+    this.feedSignature = sig;
     const top = this.scroller.getBoundingClientRect().top;
     const anchors = [...this.cards.values()].filter(card => card.el.isConnected && card.el.getBoundingClientRect().bottom >= top)
       .slice(0, 3).map(card => ({ key: card.memo.key, offset: card.el.getBoundingClientRect().top - top }));
@@ -764,6 +791,7 @@ export class MemoView extends ItemView {
     fold.hidden = true;
     const tags = element(node, 'div', 'xj-card-tags');
     const card: Card = { el: node, component, memo, checkbox, body, fold, alive: true };
+    this.cardByEl.set(node, card);
     let selectedBeforePointer = false;
     node.addEventListener('pointerdown', () => { selectedBeforePointer = Boolean(node.ownerDocument.defaultView?.getSelection()?.toString()); });
     node.addEventListener('dblclick', event => {
@@ -896,7 +924,7 @@ export class MemoView extends ItemView {
 
   private run(action: () => Promise<unknown> | void): void { void Promise.resolve().then(action).catch(error => this.plugin.report(error)); }
   private disposeCard(card: Card): void {
-    card.alive = false; this.cardObserver?.unobserve(card.el); card.component.unload(); card.el.remove();
+    card.alive = false; this.cardObserver?.unobserve(card.el); this.measuredCards.delete(card.memo.key); card.component.unload(); card.el.remove();
   }
 
   async revealMemo(memo: Memo): Promise<void> {
