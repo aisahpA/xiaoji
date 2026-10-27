@@ -74,36 +74,59 @@ export function serializeMemo(id: string, body: string, flags: { archived?: bool
   return header + eol + body.replace(/\r\n/g, '\n').split('\n').map(line => '  ' + line).join(eol);
 }
 
-export function findUnchanged(text: string, snapshot: Memo): Memo {
-  const candidates = parseMemos(text, snapshot.path).filter(memo => memo.id === snapshot.id);
+export function findUnchanged(text: string, snapshot: Memo, existing?: Memo[]): Memo {
+  const candidates = (existing ?? parseMemos(text, snapshot.path)).filter(memo => memo.id === snapshot.id);
   // An identical duplicated record is ambiguous too: never guess which one to edit.
   if (candidates.length !== 1 || candidates[0]?.raw !== snapshot.raw) throw new MemoError('conflict');
   return candidates[0];
 }
 
-export function replaceMemo(text: string, snapshot: Memo, body: string): string {
+export function replaceMemo(text: string, snapshot: Memo, body: string, existing?: Memo[]): { text: string; memo: Memo } {
   if (!body.trim()) throw new MemoError('emptyMemo');
-  const current = findUnchanged(text, snapshot);
+  const current = findUnchanged(text, snapshot, existing);
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   // Preserve unknown header tokens and the original identity.
   const replacement = current.header + eol + body.replace(/\r\n/g, '\n').split('\n').map(line => '  ' + line).join(eol);
-  return text.slice(0, current.start) + replacement + text.slice(current.end);
+  const next = text.slice(0, current.start) + replacement + text.slice(current.end);
+  const memo: Memo = {
+    ...snapshot,
+    body,
+    raw: replacement,
+    header: current.header,
+    start: current.start,
+    end: current.start + replacement.length,
+    line: next.slice(0, current.start).split('\n').length - 1,
+    ...features(body),
+  };
+  return { text: next, memo };
 }
 
-export function changeFlag(text: string, snapshot: Memo, flag: '×' | '↑', enabled: boolean): string {
-  const current = findUnchanged(text, snapshot);
+export function changeFlag(text: string, snapshot: Memo, flag: '×' | '↑', enabled: boolean, existing?: Memo[]): { text: string; memo: Memo } {
+  const current = findUnchanged(text, snapshot, existing);
   const tokens = current.header.slice(2).split(/[ \t]+/).filter(token => token !== flag);
   if (enabled) tokens.splice(1, 0, flag);
   const header = '- ' + tokens.join(' ');
-  return text.slice(0, current.start) + header + text.slice(current.start + current.header.length);
+  const next = text.slice(0, current.start) + header + text.slice(current.start + current.header.length);
+  const raw = header + current.raw.slice(current.header.length);
+  const memo: Memo = {
+    ...snapshot,
+    raw,
+    header,
+    start: current.start,
+    end: current.end + (header.length - current.header.length),
+    archived: flag === '×' ? enabled : snapshot.archived,
+    pinned: flag === '↑' ? enabled : snapshot.pinned,
+  };
+  return { text: next, memo };
 }
 
-export function appendMemo(text: string, raw: string, time: number, settings: Settings, heading: string): string {
+export function appendMemo(text: string, raw: string, time: number, settings: Settings, heading: string, existing?: Memo[]): string {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   if (settings.grouping === 'none') {
     return text + (text ? (text.endsWith(eol + eol) ? '' : text.endsWith(eol) ? eol : eol + eol) : '') + raw + eol;
   }
-  const sameGroup = parseMemos(text, '').filter(memo => groupKey(memo.createdAt, settings.grouping) === groupKey(time, settings.grouping));
+  const memos = existing ?? parseMemos(text, '');
+  const sameGroup = memos.filter(memo => groupKey(memo.createdAt, settings.grouping) === groupKey(time, settings.grouping));
   const last = sameGroup.at(-1);
   if (last) {
     return text.slice(0, last.end) + eol + eol + raw + text.slice(last.end);

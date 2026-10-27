@@ -75,14 +75,14 @@ describe('Markdown records', () => {
   it('preserves all unrelated source, CRLF, and unknown header metadata when archiving', () => {
     const text = '# 私人原文\r\n\r\n- ' + id + ' ^my-block custom-token\r\n  内容\r\n\r\n## 其他\r\n不要改。\r\n';
     const snapshot = parseMemos(text, 'test.md')[0]!;
-    const next = changeFlag(text, snapshot, '×', true);
+    const next = changeFlag(text, snapshot, '×', true).text;
     expect(next).toBe(text.replace('- ' + id, '- ' + id + ' ×'));
     expect(parseMemos(next, 'test.md')[0]!.blockId).toBe('my-block');
   });
   it('preserves source outside the edited record', () => {
     const text = '# 前文\n\n' + serializeMemo(id, '旧内容') + '\n\n## 后文\n\n不要修改';
     const snapshot = parseMemos(text, 'test.md')[0]!;
-    const next = replaceMemo(text, snapshot, '新内容\n\n- [ ] 新任务');
+    const next = replaceMemo(text, snapshot, '新内容\n\n- [ ] 新任务').text;
     expect(next).toBe('# 前文\n\n' + serializeMemo(id, '新内容\n\n- [ ] 新任务') + '\n\n## 后文\n\n不要修改');
   });
   it('refuses stale snapshots rather than overwriting a second editor', () => {

@@ -51,7 +51,7 @@ describe('Repository scan cache', () => {
     expect(repo.records.map(memo => memo.id)).toContain('20261021100000003');
   });
 
-  it('本地写入触发 invalidate，下一次 scan 重新读取后再命中缓存', async () => {
+  it('本地写入回填缓存，下一次 scan 直接命中不再读取文件', async () => {
     const { files, repo } = await setup();
     await repo.scan();
     expect(files.reads).toBe(1);
@@ -59,10 +59,10 @@ describe('Repository scan cache', () => {
     const created = await repo.create('新增一条 #测试');
     const beforeScan = files.reads;
     await repo.scan();
-    expect(files.reads).toBe(beforeScan + 1);
+    expect(files.reads).toBe(beforeScan);
     expect(repo.records.map(memo => memo.id)).toContain(created.id);
 
     await repo.scan();
-    expect(files.reads).toBe(beforeScan + 1);
+    expect(files.reads).toBe(beforeScan);
   });
 });

@@ -138,6 +138,12 @@ export class Repository {
     });
   }
 
+  /** Backfill the scan cache after a local write so the post-write refresh does not re-parse. */
+  private backfill(path: string, memos: Memo[]): void {
+    const revision = this.files.revision(path);
+    if (revision !== undefined) this.cache.set(path, { revision, memos });
+  }
+
   async create(body: string, prepare?: (body: string, path: string) => string): Promise<Memo> {
     if (!body.trim()) throw new MemoError('emptyMemo');
     return this.enqueue(async () => {
@@ -149,13 +155,27 @@ export class Repository {
         const path = fileForDate(date, settings);
         await this.ensureFile(path);
         let result: Memo | undefined;
+        let allMemos: Memo[] = [];
         try {
           await this.files.process(path, current => {
-            if (parseMemos(current, path).some(memo => memo.id === id)) throw new MemoError('duplicate');
-            const raw = serializeMemo(id, prepare ? prepare(body, path) : body, {}, current.includes('\r\n') ? '\r\n' : '\n');
-            const next = appendMemo(current, raw, date.valueOf(), settings, headingForDate(date, settings));
-            result = parseMemos(next, path).find(memo => memo.id === id);
-            if (!result) throw new MemoError('invalidMarkdown');
+            const existing = parseMemos(current, path);
+            if (existing.some(memo => memo.id === id)) throw new MemoError('duplicate');
+            const finalBody = prepare ? prepare(body, path) : body;
+            const eol = current.includes('\r\n') ? '\r\n' : '\n';
+            const raw = serializeMemo(id, finalBody, {}, eol);
+            const next = appendMemo(current, raw, date.valueOf(), settings, headingForDate(date, settings), existing);
+            const start = next.indexOf(raw);
+            const end = start + raw.length;
+            const occurrence = existing.filter(memo => memo.id === id).length;
+            result = {
+              id, key: path + '::' + id + '::' + occurrence, path,
+              body: finalBody, raw, header: '- ' + id,
+              start, end, line: next.slice(0, start).split('\n').length - 1,
+              occurrence, createdAt: date.valueOf(),
+              archived: false, pinned: false, blockId: null,
+              ...features(finalBody),
+            };
+            allMemos = [...existing, result].sort((a, b) => a.start - b.start);
             return next;
           });
         } catch (error) {
@@ -163,40 +183,42 @@ export class Repository {
           throw error;
         }
         if (!result) throw new MemoError('writeFailed');
-        this.invalidate(path);
         this.records.push(result);
+        this.backfill(path, allMemos);
         return result;
       }
       throw new MemoError('duplicate');
     });
   }
 
-  private mutate(snapshot: Memo, transform: (current: string) => string): Promise<Memo> {
+  private mutate(snapshot: Memo, transform: (current: string, existing: Memo[]) => { text: string; memo: Memo }): Promise<Memo> {
     return this.enqueue(async () => {
       let result: Memo | undefined;
+      let allMemos: Memo[] = [];
       await this.files.process(snapshot.path, current => {
-        const next = transform(current);
-        result = parseMemos(next, snapshot.path).find(memo => memo.id === snapshot.id);
-        if (!result) throw new MemoError('invalidMarkdown');
+        const existing = parseMemos(current, snapshot.path);
+        const { text: next, memo } = transform(current, existing);
+        result = memo;
+        allMemos = existing.map(memo => memo.key === snapshot.key ? result! : memo);
         return next;
       });
       if (!result) throw new MemoError('writeFailed');
-      this.invalidate(snapshot.path);
       this.records = this.records.map(memo => memo.key === snapshot.key ? result! : memo);
+      this.backfill(snapshot.path, allMemos);
       return result;
     });
   }
 
   edit(snapshot: Memo, body: string): Promise<Memo> {
-    return this.mutate(snapshot, current => replaceMemo(current, snapshot, body));
+    return this.mutate(snapshot, (current, existing) => replaceMemo(current, snapshot, body, existing));
   }
 
   setArchived(snapshot: Memo, enabled: boolean): Promise<Memo> {
-    return this.mutate(snapshot, current => changeFlag(current, snapshot, '×', enabled));
+    return this.mutate(snapshot, (current, existing) => changeFlag(current, snapshot, '×', enabled, existing));
   }
 
   setPinned(snapshot: Memo, enabled: boolean): Promise<Memo> {
-    return this.mutate(snapshot, current => changeFlag(current, snapshot, '↑', enabled));
+    return this.mutate(snapshot, (current, existing) => changeFlag(current, snapshot, '↑', enabled, existing));
   }
 
   addTag(snapshot: Memo, value: string): Promise<Memo> {
@@ -227,7 +249,9 @@ export class Repository {
 
   delete(snapshot: Memo): Promise<TrashEntry> {
     return this.enqueue(async () => {
-      findUnchanged(await this.files.read(snapshot.path), snapshot);
+      const text = await this.files.read(snapshot.path);
+      const existing = parseMemos(text, snapshot.path);
+      findUnchanged(text, snapshot, existing);
       const deletedAt = this.clock();
       let name = snapshot.id + '-' + timestamp(deletedAt) + '.md';
       let suffix = 1;
@@ -237,12 +261,12 @@ export class Repository {
       await this.trash.append(entry);
       try {
         await this.files.process(snapshot.path, current => {
-          const target = findUnchanged(current, snapshot);
+          const target = findUnchanged(current, snapshot, existing);
           return current.slice(0, target.start) + current.slice(target.end);
         });
       } catch { throw new MemoError('deleteBackupSaved'); }
       this.records = this.records.filter(memo => memo.key !== snapshot.key);
-      this.invalidate(snapshot.path);
+      this.backfill(snapshot.path, existing.filter(memo => memo.key !== snapshot.key));
       let state: TrashStoreEntry['state'] = 'backup';
       try { await this.trash.update(name, e => ({ ...e, state: 'deleted' })); state = 'deleted'; }
       catch { /* The readable backup remains recoverable even if its status update failed. */ }
@@ -283,16 +307,28 @@ export class Repository {
       const path = safeSourcePath(entry.source);
       await this.ensureFile(path);
       let restored: Memo | undefined;
+      let allMemos: Memo[] = [];
       await this.files.process(path, current => {
-        if (parseMemos(current, path).some(memo => memo.id === snapshot.memo.id)) throw new MemoError('restoreDuplicate');
-        const next = appendMemo(current, entry.raw, snapshot.memo.createdAt, this.settings(), headingForDate(snapshot.memo.createdAt, this.settings()));
-        restored = parseMemos(next, path).find(memo => memo.id === snapshot.memo.id);
-        if (!restored) throw new MemoError('invalidMarkdown');
+        const existing = parseMemos(current, path);
+        if (existing.some(memo => memo.id === snapshot.memo.id)) throw new MemoError('restoreDuplicate');
+        const next = appendMemo(current, entry.raw, snapshot.memo.createdAt, this.settings(), headingForDate(snapshot.memo.createdAt, this.settings()), existing);
+        const start = next.indexOf(entry.raw);
+        const end = start + entry.raw.length;
+        const occurrence = existing.filter(memo => memo.id === snapshot.memo.id).length;
+        restored = {
+          ...snapshot.memo,
+          path,
+          key: path + '::' + snapshot.memo.id + '::' + occurrence,
+          start, end,
+          line: next.slice(0, start).split('\n').length - 1,
+          occurrence,
+        };
+        allMemos = [...existing, restored].sort((a, b) => a.start - b.start);
         return next;
       });
       if (!restored) throw new MemoError('writeFailed');
-      this.invalidate(path);
       this.records.push(restored);
+      this.backfill(path, allMemos);
       let removed = false;
       try { removed = await this.trash.remove(name); } catch { throw new MemoError('restoreBackupRemains'); }
       if (!removed) throw new MemoError('restoreBackupRemains');

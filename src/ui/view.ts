@@ -363,7 +363,9 @@ export class MemoView extends ItemView {
         await p.createMemo(this.composer.getValue(), this.composerSource);
       await p.clearDraft(editing ? this.draftKey + '-edit' : this.draftKey).catch(error => p.report(error));
       this.editing = null; this.buildComposer();
-      await p.refresh();
+      // create/edit already updated repo.records and backfilled the scan cache; refreshSoon
+      // schedules a debounced scan that will hit the cache, so saving no longer blocks on it.
+      p.refreshSoon();
       if (editing) {
         this.scroller.scrollTop = this.editReturnScroll;
         const card = this.cards.get(memo.key); card?.el.classList.add('is-revealed');
