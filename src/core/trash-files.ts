@@ -60,18 +60,7 @@ export class TrashFiles implements FilePort {
   }
   listMarkdown(): Promise<string[]> { return this.queue(async () => {
     const paths = await this.files.listMarkdown(), entries = await this.entries();
-    for (const path of paths.filter(p => p.startsWith(this.root()))) {
-      try {
-        const before = await this.files.read(path), item = decode(before, path.slice(this.root().length));
-        const existing = entries.find(e => e.name === item.name);
-        if (existing && legacy(existing) !== legacy(item)) continue;
-        if (!existing) { entries.push(item); await this.write(entries); }
-        const confirmed = (await this.entries()).find(e => e.name === item.name);
-        if (confirmed && legacy(confirmed) === legacy(item) && await this.files.read(path) === before) await this.files.remove(path);
-      } catch { /* Unrecognized or changed legacy files stay readable in their original location. */ }
-    }
-    const remaining = await this.files.listMarkdown();
-    return [...new Set([...remaining.filter(p => p !== this.store()), ...entries.map(e => this.root() + e.name)])];
+    return [...new Set([...paths.filter(p => p !== this.store()), ...entries.map(e => this.root() + e.name)])];
   }); }
   read(path: string): Promise<string> { return path.startsWith(this.root()) ? this.queue(async () => { const e = (await this.entries()).find(e => this.root() + e.name === path); return e ? legacy(e) : this.files.read(path); }) : this.files.read(path); }
   exists(path: string): Promise<boolean> { return path.startsWith(this.root()) ? this.queue(async () => (await this.entries()).some(e => this.root() + e.name === path) || await this.files.exists(path)) : this.files.exists(path); }

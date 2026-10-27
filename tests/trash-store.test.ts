@@ -10,11 +10,6 @@ it('stores multiple deleted memos in one Markdown file without YAML and restores
  await plugin.repo.restore(entries[0]!);expect((await plugin.repo.listTrash()).entries).toHaveLength(1);
  await plugin.repo.scan();expect(plugin.repo.records).toHaveLength(3);
 });
-it('migrates readable old entries only after saving them in the aggregate',async()=>{
- const {files}=await makeFixture();const path='小记/_回收站/20261023120000000.md';
- await files.create(path,'---\nxiaoji-trash: 1\nsource: "小记/2610小记.md"\ndeletedAt: "2026-10-23T00:00:00Z"\nstate: deleted\n---\n\n- 20261023120000000\n  旧记录\n');
- const port=new TrashFiles(files,()=> '小记');await port.listMarkdown();expect(await files.exists(path)).toBe(false);expect(await port.read(path)).toContain('旧记录');
-});
 it('refuses to overwrite an existing ordinary recycle note',async()=>{const {plugin,files}=await makeFixture();await files.create('小记/回收站.md','用户自己的笔记');await expect(plugin.repo.delete(plugin.repo.records[0]!)).rejects.toThrow();expect(await files.read('小记/回收站.md')).toBe('用户自己的笔记');});
 
 it('preserves trailing spaces',async()=>{const {plugin}=await makeFixture();const m=await plugin.repo.create('hard break  ');await plugin.repo.delete(m);expect((await plugin.repo.listTrash()).entries[0]!.memo.raw).toBe(m.raw);});
