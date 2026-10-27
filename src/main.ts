@@ -96,6 +96,7 @@ export default class XiaojiPlugin extends Plugin {
   private stopped = false;
   private openingQuick: Promise<void> | null = null;
   private quickHotkeyRegistered: string | null = null;
+  private initialScanStarted = false;
   loading = true;
   readError = false;
 
@@ -172,7 +173,7 @@ export default class XiaojiPlugin extends Plugin {
     this.registerEvent(this.app.vault.on('create', changed));
     this.registerEvent(this.app.vault.on('delete', changed));
     this.registerEvent(this.app.vault.on('rename', changed));
-    this.app.workspace.onLayoutReady(() => { this.setupQuickHotkey(); void this.refresh().catch(error => this.report(error)); });
+    this.app.workspace.onLayoutReady(() => { this.setupQuickHotkey(); });
   }
 
   onunload(): void {
@@ -194,7 +195,7 @@ export default class XiaojiPlugin extends Plugin {
     this.refreshTimer = window.setTimeout(() => { this.refreshTimer = null; void this.refresh().catch(error => this.report(error)); }, 180);
   }
   async refresh(): Promise<void> {
-    try { await this.repo.scan(); this.tagCache = null; this.readError = false; }
+    try { await this.repo.scan(() => this.notify()); this.tagCache = null; this.readError = false; }
     catch (error) { this.readError = true; console.error('[xiaoji] Index refresh failed', error); throw new MemoError('readFailed'); }
     finally { this.loading = false; this.notify(); }
   }
@@ -294,6 +295,7 @@ export default class XiaojiPlugin extends Plugin {
     view.focusComposer();
   }
   async openView(): Promise<MemoView> {
+    if (!this.initialScanStarted) { this.initialScanStarted = true; void this.refresh().catch(error => this.report(error)); }
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     const leaf = existing ?? this.app.workspace.getLeaf('tab');
     if (!existing) await leaf.setViewState({ type: VIEW_TYPE, active: true });

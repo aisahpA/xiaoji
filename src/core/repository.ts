@@ -45,7 +45,17 @@ export class Repository {
     catch (error) { if (!(await this.files.exists(path))) throw error; }
   }
 
-  async scan(): Promise<Memo[]> {
+  /** Recompute the duplicate-id set from the current records. */
+  private recomputeDuplicates(): void {
+    const ids = new Set<string>();
+    this.duplicates.clear();
+    for (const memo of this.records) {
+      if (ids.has(memo.id)) this.duplicates.add(memo.id);
+      ids.add(memo.id);
+    }
+  }
+
+  async scan(onProgress?: () => void): Promise<Memo[]> {
     const version = ++this.scanVersion;
     const prefix = normalizeFolder(this.settings().folder) + '/';
     const store = trashStorePath(this.settings());
@@ -53,9 +63,13 @@ export class Repository {
     const present = new Set(paths);
     for (const path of this.cache.keys()) if (!present.has(path)) this.cache.delete(path);
     const result: Memo[] = [];
+    const BATCH = 8;
+    // Yield to the main thread every 3 batches (24 files) so the UI stays responsive during a cold scan.
+    const YIELD_EVERY = 3;
+    let batchCount = 0;
     // Bound parallel reads instead of opening every source file simultaneously.
-    for (let i = 0; i < paths.length; i += 8) {
-      const batch = await Promise.all(paths.slice(i, i + 8).map(async path => {
+    for (let i = 0; i < paths.length; i += BATCH) {
+      const batch = await Promise.all(paths.slice(i, i + BATCH).map(async path => {
         const revision = this.files.revision(path);
         const cached = this.cache.get(path);
         if (revision !== undefined && cached?.revision === revision) return cached.memos;
@@ -64,16 +78,15 @@ export class Repository {
         return memos;
       }));
       result.push(...batch.flat());
-    }
-    if (version === this.scanVersion) {
-      this.records = result;
-      const ids = new Set<string>();
-      this.duplicates.clear();
-      for (const memo of result) {
-        if (ids.has(memo.id)) this.duplicates.add(memo.id);
-        ids.add(memo.id);
+      if (version === this.scanVersion) {
+        // Shallow copy so consumers watching the reference (e.g. view signature gate) re-render.
+        this.records = result.slice();
+        this.recomputeDuplicates();
+        onProgress?.();
       }
+      if (++batchCount % YIELD_EVERY === 0) await sleep(0);
     }
+    if (version !== this.scanVersion) return this.records;
     return result;
   }
 
