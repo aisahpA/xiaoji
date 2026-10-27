@@ -1,60 +1,69 @@
 import { parseMarkdown, parseMemos } from './markdown';
-import { MemoError, type FilePort } from './types';
+import { MemoError, type FilePort, type Memo } from './types';
 
 const marker = '<!-- xiaoji-trash-store:1 -->';
 const entryMarker = '<!-- xiaoji-trash-entry ';
 
-/** One entry inside the aggregate trash store (小记/回收站.md). */
+/**
+ * One deleted memo inside the aggregate trash file (小记/回收站.md).
+ *
+ * The body is an ordinary memo, so `memo` is exactly what the normal index would produce.
+ * The original file is not stored: `restore()` derives the target from `memo.createdAt`
+ * using the current settings, so restored memos always land in the currently-active scheme.
+ */
 export interface TrashStoreEntry {
-  name: string;          // <id>-<timestamp>.md
-  source: string;
+  key: string;        // in-memory identity: <id>@<deletedAt>
   deletedAt: string;
-  state: 'backup' | 'deleted';
-  raw: string;           // original memo markdown
+  memo: Memo;
 }
 
-function decode(text: string, name: string): TrashStoreEntry {
-  const match = /^---\r?\nxiaoji-trash: 1\r?\nsource: (".*")\r?\ndeletedAt: (".*")\r?\nstate: (backup|deleted)\r?\n---\r?\n\r?\n/.exec(text);
-  if (!match) throw new MemoError('invalidTrash');
-  const source: unknown = JSON.parse(match[1]!), deletedAt: unknown = JSON.parse(match[2]!);
-  if (typeof source !== 'string' || typeof deletedAt !== 'string') throw new MemoError('invalidTrash');
-  const memos = parseMemos(text.slice(match[0].length), source);
-  if (memos.length !== 1) throw new MemoError('invalidTrash');
-  return { name, source, deletedAt, state: match[3] as 'backup' | 'deleted', raw: memos[0]!.raw };
+interface Meta { deletedAt: string }
+
+function decodeMeta(value: string): Meta {
+  if (!value.startsWith(entryMarker) || !value.endsWith(' -->')) throw new MemoError('invalidTrash');
+  let meta: { deletedAt?: unknown };
+  try { meta = JSON.parse(value.slice(entryMarker.length, -4)) as { deletedAt?: unknown }; }
+  catch { throw new MemoError('invalidTrash'); }
+  if (!meta || typeof meta.deletedAt !== 'string') throw new MemoError('invalidTrash');
+  return { deletedAt: meta.deletedAt };
 }
 
-const legacy = (e: TrashStoreEntry): string => '---\nxiaoji-trash: 1\nsource: ' + JSON.stringify(e.source) + '\ndeletedAt: ' + JSON.stringify(e.deletedAt) + '\nstate: ' + e.state + '\n---\n\n' + e.raw + '\n';
-
+/**
+ * Entries are delimited by Markdown structure: a metadata comment followed by exactly one
+ * top-level list item, which is the memo itself. No length prefix is needed because the list
+ * item already tells the parser where the body ends.
+ */
 function parse(text: string): TrashStoreEntry[] {
   if (!text.startsWith(marker + '\n')) throw new MemoError('invalidTrash');
-  const nodes = parseMarkdown(text).children.filter(n => n.type === 'html' && n.value.startsWith(entryMarker));
   const entries: TrashStoreEntry[] = [];
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i]!;
-    if (node.type !== 'html' || !node.value.endsWith(' -->')) throw new MemoError('invalidTrash');
-    const metadata = JSON.parse(node.value.slice(entryMarker.length, -4)) as TrashStoreEntry & { length: number };
-    if (!metadata || typeof metadata.name !== 'string' || !/^[\w-]+\.md$/.test(metadata.name) || entries.some(e => e.name === metadata.name)) throw new MemoError('invalidTrash');
-    if (metadata.length !== undefined && (!Number.isSafeInteger(metadata.length) || metadata.length < 0)) throw new MemoError('invalidTrash');
-    const start = node.position!.end.offset! + 1;
-    const raw = metadata.length === undefined ? text.slice(start, nodes[i + 1]?.position?.start.offset ?? text.length).replace(/\n\n$|\n$/, '') : text.slice(start, start + metadata.length);
-    const entry = decode(legacy({ ...metadata, raw }), metadata.name);
-    if (entry.raw !== raw) throw new MemoError('invalidTrash');
-    entries.push(entry);
+  let meta: Meta | null = null;
+  for (const node of parseMarkdown(text).children) {
+    if (node.type === 'html') {
+      if (!node.value.startsWith(entryMarker)) continue;
+      if (meta) throw new MemoError('invalidTrash');
+      meta = decodeMeta(node.value);
+      continue;
+    }
+    const start = node.position?.start.offset, end = node.position?.end.offset;
+    if (node.type !== 'list' || !meta || start === undefined || end === undefined) throw new MemoError('invalidTrash');
+    const memos = parseMemos(text.slice(start, end), '');
+    if (memos.length !== 1) throw new MemoError('invalidTrash');
+    entries.push({ key: memos[0]!.id + '@' + meta.deletedAt, deletedAt: meta.deletedAt, memo: memos[0]! });
+    meta = null;
   }
-  if (serialize(entries).trim() !== text.trim() && serialize(entries).replace(/,"length":\d+/g, '').trim() !== text.trim()) throw new MemoError('invalidTrash');
+  if (meta) throw new MemoError('invalidTrash');
   return entries;
 }
 
-const serialize = (entries: TrashStoreEntry[]): string => marker + '\n\n' + entries.map(({raw, ...metadata}) =>
-  entryMarker + JSON.stringify({ ...metadata, length: raw.length }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e') + ' -->\n' + raw).join('\n\n') + (entries.length ? '\n' : '');
+const serialize = (entries: TrashStoreEntry[]): string => marker + '\n\n' + entries.map(entry =>
+  entryMarker + JSON.stringify({ deletedAt: entry.deletedAt }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e') + ' -->\n' + entry.memo.raw
+).join('\n\n') + (entries.length ? '\n' : '');
 
 /**
  * Aggregate trash storage backed by a single Markdown file (小记/回收站.md).
  *
- * Loads the store once into an in-memory snapshot and reuses it for subsequent
- * reads; every write goes through a serial queue and detects conflicts against
- * the last known store bytes. The on-disk format is byte-identical to the
- * previous TrashFiles implementation.
+ * Loads the store once into an in-memory snapshot and reuses it for subsequent reads; every
+ * write goes through a serial queue and detects conflicts against the last known store bytes.
  */
 export class TrashStore {
   private tail: Promise<unknown> = Promise.resolve();
@@ -95,40 +104,30 @@ export class TrashStore {
 
   /** Return all entries (cached snapshot). Callers must not mutate the result. */
   list(): Promise<TrashStoreEntry[]> {
-    return this.queue(async () => this.load());
+    return this.queue(async () => [...await this.load()]);
   }
 
-  /** Return a single entry by name, or undefined if absent. */
-  get(name: string): Promise<TrashStoreEntry | undefined> {
-    return this.queue(async () => (await this.load()).find(e => e.name === name));
+  /** Return a single entry by key, or undefined if absent. */
+  get(key: string): Promise<TrashStoreEntry | undefined> {
+    return this.queue(async () => (await this.load()).find(entry => entry.key === key));
   }
 
-  /** Append a new entry. Throws 'conflict' if the name already exists. */
-  append(entry: TrashStoreEntry): Promise<void> {
+  /** Append one deleted memo and return its stored entry. */
+  append(deletedAt: string, memo: Memo): Promise<TrashStoreEntry> {
     return this.queue(async () => {
       const entries = [...await this.load()];
-      if (entries.some(e => e.name === entry.name)) throw new MemoError('conflict');
+      const entry: TrashStoreEntry = { key: memo.id + '@' + deletedAt, deletedAt, memo };
       entries.push(entry);
       await this.write(entries);
+      return entry;
     });
   }
 
-  /** Mutate an existing entry in place. Throws 'invalidTrash' if not found. */
-  update(name: string, mutate: (entry: TrashStoreEntry) => TrashStoreEntry): Promise<void> {
-    return this.queue(async () => {
-      const entries = [...await this.load()];
-      const index = entries.findIndex(e => e.name === name);
-      if (index < 0) throw new MemoError('invalidTrash');
-      entries[index] = mutate(entries[index]!);
-      await this.write(entries);
-    });
-  }
-
-  /** Remove an entry by name. Returns false if not found. */
-  remove(name: string): Promise<boolean> {
+  /** Remove an entry by key. Returns false if not found. */
+  remove(key: string): Promise<boolean> {
     return this.queue(async () => {
       const entries = await this.load();
-      const next = entries.filter(e => e.name !== name);
+      const next = entries.filter(entry => entry.key !== key);
       if (next.length === entries.length) return false;
       await this.write(next);
       return true;

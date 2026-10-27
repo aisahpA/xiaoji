@@ -332,7 +332,7 @@ describe('fixed capture workflow', () => {
     Menu.last!.items.find(item => item.title === '移入回收站')!.callback(); await flush();
     expect(document.querySelector('.modal')).toBeNull();
     expect(plugin.repo.records).toHaveLength(count - 1);
-    expect((await plugin.repo.listTrash()).entries).toHaveLength(1);
+    expect(await plugin.repo.listTrash()).toHaveLength(1);
   });
   it('adds a task at the active line and keeps valid Markdown', async () => {
     const { root } = await setup();

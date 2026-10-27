@@ -2,7 +2,8 @@ import { Component, ItemView, MarkdownRenderer, Menu, Notice, Platform, setIcon,
 import type XiaojiPlugin from '../main';
 import { densityValues } from '../core/settings';
 import { compileSearch, selectMemos } from '../core/search';
-import { MemoError, type Memo, type NavItem, type TrashEntry } from '../core/types';
+import { MemoError, type Memo, type NavItem } from '../core/types';
+import type { TrashStoreEntry } from '../core/trash-store';
 import { bindErrors, button, element, empty, interactiveTarget } from './dom';
 import { MemoEditor } from './editor';
 import { navigation, surfaceNavigation, reorderSurface, orderedTags, reorderTags, tagSiblings } from '../core/navigation';
@@ -337,7 +338,7 @@ export class MemoView extends ItemView {
     this.plugin.setDraft(this.draftKey, this.composer.getValue(), undefined, { sourcePath: this.composerSource, autoTag: this.automaticTag });
     this.composer.moveCursor(0);
   }
-  private offerUndo(entries: TrashEntry[]): void {
+  private offerUndo(entries: TrashStoreEntry[]): void {
     const fragment = this.root.ownerDocument.win.createFragment();
     fragment.append(this.plugin.t('deleted') + ' ');
     const undo = fragment.createEl('button'); undo.textContent = this.plugin.t('undoDelete');
@@ -919,7 +920,7 @@ export class MemoView extends ItemView {
     if (!memos.length) { new Notice(p.t('noSelection')); return; }
     this.bulkBusy = true;
     for (const control of this.toolbar.querySelectorAll<HTMLButtonElement>('button')) control.disabled = true;
-    const deletedEntries: TrashEntry[] = [];
+    const deletedEntries: TrashStoreEntry[] = [];
     let done = 0; let failed = 0;
     for (const memo of memos) {
       try {

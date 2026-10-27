@@ -182,7 +182,6 @@ const strings = {
   deleteBackupSaved: ['备份已存入回收站，但原文删除未完成。两份内容均保留，请核对。', 'Backup saved, but removal from the source failed. Both copies are kept; inspect them.'],
   restoreDuplicate: ['原位置已存在相同时间戳，未覆盖。回收站记录仍保留。', 'The source already has that timestamp. Nothing overwritten; recycle-bin copy kept.'],
   restoreBackupRemains: ['原文已恢复，但回收站副本清理失败。两份内容均保留。', 'Source restored, but the backup could not be removed. Both copies remain.'],
-  backupPending: ['待核对备份', 'Backup to inspect'], damagedTrash: ['有 {count} 个回收站文件需要打开原文核对。', '{count} recycle-bin files need inspection.'],
   noTrash: ['回收站为空', 'Recycle bin is empty'],
 
   confirm: ['确认', 'Confirm'], partial: ['已处理 {done} 条，{failed} 条未完成，未完成内容已保留。', '{done} processed; {failed} failed and were kept.'],

@@ -105,14 +105,6 @@ export interface FilePort {
   remove(path: string): Promise<void>;
 }
 
-export interface TrashEntry {
-  path: string;
-  source: string;
-  deletedAt: string;
-  state: 'backup' | 'deleted';
-  memo: Memo;
-}
-
 export class MemoError extends Error {
   constructor(public readonly code: string, message?: string) {
     super(message ?? code);

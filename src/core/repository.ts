@@ -3,7 +3,7 @@ import { TrashStore, type TrashStoreEntry } from './trash-store';
 import { fileForDate, headingForDate, timestamp } from './dates';
 import { appendMemo, changeFlag, features, findUnchanged, parseMarkdown, parseMemos, replaceMemo, serializeMemo } from './markdown';
 import { normalizeFolder, safeSourcePath, isChatPath } from './settings';
-import { MemoError, type FilePort, type Memo, type Settings, type TrashEntry } from './types';
+import { MemoError, type FilePort, type Memo, type Settings } from './types';
 import type { Nodes } from 'mdast';
 import { FORMAT_BACKUPS, reformatText, reformatSettingsKey, type ReformatPlan } from './maintenance';
 
@@ -268,18 +268,14 @@ export class Repository {
     return this.edit(snapshot, snapshot.body.slice(0, position) + (item.checked ? ' ' : 'x') + snapshot.body.slice(position + 1));
   }
 
-  delete(snapshot: Memo): Promise<TrashEntry> {
+  delete(snapshot: Memo): Promise<TrashStoreEntry> {
     return this.enqueue(async () => {
       const text = await this.files.read(snapshot.path);
       const existing = this.existingFor(snapshot.path, text);
       findUnchanged(text, snapshot, existing);
-      const deletedAt = this.clock();
-      let name = snapshot.id + '-' + timestamp(deletedAt) + '.md';
-      let suffix = 1;
-      while (await this.trash.get(name)) name = snapshot.id + '-' + timestamp(deletedAt) + '-' + suffix++ + '.md';
-      const entry: TrashStoreEntry = { name, source: snapshot.path, deletedAt: deletedAt.toISOString(), state: 'backup', raw: snapshot.raw };
-      // Copy first. Cross-file operations are not atomic; a failed move must leave a readable backup.
-      await this.trash.append(entry);
+      // Copy the memo into the trash first: cross-file operations are not atomic, so a failed
+      // source removal must leave a readable backup behind.
+      const entry = await this.trash.append(this.clock().toISOString(), snapshot);
       try {
         await this.files.process(snapshot.path, current => {
           const target = findUnchanged(current, snapshot, existing);
@@ -288,53 +284,40 @@ export class Repository {
       } catch { throw new MemoError('deleteBackupSaved'); }
       this.records = this.records.filter(memo => memo.key !== snapshot.key);
       this.backfill(snapshot.path, existing.filter(memo => memo.key !== snapshot.key));
-      let state: TrashStoreEntry['state'] = 'backup';
-      try { await this.trash.update(name, e => ({ ...e, state: 'deleted' })); state = 'deleted'; }
-      catch { /* The readable backup remains recoverable even if its status update failed. */ }
-      return { path: name, source: snapshot.path, deletedAt: entry.deletedAt, state, memo: snapshot };
+      return entry;
     });
   }
 
-  async listTrash(): Promise<{ entries: TrashEntry[]; damaged: string[] }> {
-    const storeEntries = await this.trash.list();
-    const entries: TrashEntry[] = [];
-    const damaged: string[] = [];
-    for (const e of storeEntries) {
-      try {
-        const memos = parseMemos(e.raw, e.source);
-        if (memos.length !== 1 || !memos[0]) throw new MemoError('invalidTrash');
-        entries.push({ path: e.name, source: e.source, deletedAt: e.deletedAt, state: e.state, memo: memos[0] });
-      } catch { damaged.push(e.name); }
-    }
-    return { entries: entries.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt)), damaged };
+  async listTrash(): Promise<TrashStoreEntry[]> {
+    return (await this.trash.list()).sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
   }
 
-  purgeTrash(snapshot: TrashEntry): Promise<void> {
+  purgeTrash(snapshot: TrashStoreEntry): Promise<void> {
     return this.enqueue(async () => {
-      const name = snapshot.path;
-      const entry = await this.trash.get(name);
+      const entry = await this.trash.get(snapshot.key);
       if (!entry) throw new MemoError('invalidTrash');
-      if (entry.raw !== snapshot.memo.raw || entry.source !== snapshot.source || entry.deletedAt !== snapshot.deletedAt) throw new MemoError('conflict');
-      await this.trash.remove(name);
+      if (entry.memo.raw !== snapshot.memo.raw || entry.deletedAt !== snapshot.deletedAt) throw new MemoError('conflict');
+      if (!await this.trash.remove(snapshot.key)) throw new MemoError('invalidTrash');
     });
   }
 
-  restore(snapshot: TrashEntry): Promise<Memo> {
+  restore(snapshot: TrashStoreEntry): Promise<Memo> {
     return this.enqueue(async () => {
-      const name = snapshot.path;
-      const entry = await this.trash.get(name);
+      const entry = await this.trash.get(snapshot.key);
       if (!entry) throw new MemoError('invalidTrash');
-      if (entry.raw !== snapshot.memo.raw || entry.source !== snapshot.source) throw new MemoError('conflict');
-      const path = safeSourcePath(entry.source);
+      if (entry.memo.raw !== snapshot.memo.raw) throw new MemoError('conflict');
+      // The original file is not persisted; derive the target from the memo's creation time
+      // using the current settings so restored memos always match the active storage scheme.
+      const path = fileForDate(entry.memo.createdAt, this.settings());
       await this.ensureFile(path);
       let restored: Memo | undefined;
       let allMemos: Memo[] = [];
       await this.files.process(path, current => {
         const existing = this.existingFor(path, current);
         if (existing.some(memo => memo.id === snapshot.memo.id)) throw new MemoError('restoreDuplicate');
-        const next = appendMemo(current, entry.raw, snapshot.memo.createdAt, this.settings(), headingForDate(snapshot.memo.createdAt, this.settings()), existing);
-        const start = next.indexOf(entry.raw);
-        const end = start + entry.raw.length;
+        const next = appendMemo(current, entry.memo.raw, snapshot.memo.createdAt, this.settings(), headingForDate(snapshot.memo.createdAt, this.settings()), existing);
+        const start = next.indexOf(entry.memo.raw);
+        const end = start + entry.memo.raw.length;
         const occurrence = existing.filter(memo => memo.id === snapshot.memo.id).length;
         restored = {
           ...snapshot.memo,
@@ -351,7 +334,7 @@ export class Repository {
       this.records.push(restored);
       this.backfill(path, allMemos);
       let removed = false;
-      try { removed = await this.trash.remove(name); } catch { throw new MemoError('restoreBackupRemains'); }
+      try { removed = await this.trash.remove(snapshot.key); } catch { throw new MemoError('restoreBackupRemains'); }
       if (!removed) throw new MemoError('restoreBackupRemains');
       return restored;
     });

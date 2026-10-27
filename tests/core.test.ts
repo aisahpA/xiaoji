@@ -207,8 +207,8 @@ describe('Safe repository operations', () => {
     await expect(repo.delete(snapshot)).rejects.toThrow('deleteBackupSaved');
     expect(await files.read(path)).toBe(original);
     const trash = await repo.listTrash();
-    expect(trash.entries[0]!.memo.body).toBe(snapshot.body);
-    expect(trash.entries[0]!.state).toBe('backup');
+    expect(trash[0]!.memo.body).toBe(snapshot.body);
+    expect(trash[0]!.memo.path).toBe(path);
   });
   it('deletes and restores rich content with original state and identity', async () => {
     const { files, repo, snapshot, path } = await setup('文字\n\n- [ ] 任务\n\n$$x^2$$');
@@ -216,21 +216,21 @@ describe('Safe repository operations', () => {
     await repo.delete(pinned);
     expect(parseMemos(await files.read(path), path)).toHaveLength(0);
     const trash = await repo.listTrash();
-    expect(trash.entries).toHaveLength(1);
-    const restored = await repo.restore(trash.entries[0]!);
+    expect(trash).toHaveLength(1);
+    const restored = await repo.restore(trash[0]!);
     expect(restored.body).toBe(snapshot.body);
     expect(restored.pinned).toBe(true);
     expect(restored.id).toBe(id);
-    expect((await repo.listTrash()).entries).toHaveLength(0);
+    expect(await repo.listTrash()).toHaveLength(0);
   });
   it('never overwrites an existing source record on restore', async () => {
     const { files, repo, snapshot, path } = await setup();
     await repo.delete(snapshot);
-    const entry = (await repo.listTrash()).entries[0]!;
+    const entry = (await repo.listTrash())[0]!;
     files.data.set(path, serializeMemo(id, '另外恢复的版本'));
     await expect(repo.restore(entry)).rejects.toThrow('restoreDuplicate');
     expect(await files.read(path)).toContain('另外恢复的版本');
-    expect((await repo.listTrash()).entries).toHaveLength(1);
+    expect(await repo.listTrash()).toHaveLength(1);
   });
   it('blocks a stale edit and keeps newer text', async () => {
     const { files, repo, snapshot, path } = await setup();
@@ -254,17 +254,17 @@ describe('Safe repository operations', () => {
     const { files, repo, snapshot, path } = await setup();
     files.data.set('附件/shared.png', 'shared');
     await repo.delete(snapshot);
-    const entry = (await repo.listTrash()).entries[0]!;
-    await expect(repo.purgeTrash({ ...entry, path })).rejects.toThrow('invalidTrash');
+    const entry = (await repo.listTrash())[0]!;
+    await expect(repo.purgeTrash({ ...entry, key: "nope" })).rejects.toThrow('invalidTrash');
     await repo.purgeTrash(entry);
-    expect((await repo.listTrash()).entries).toHaveLength(0);
+    expect(await repo.listTrash()).toHaveLength(0);
     expect(await files.read('附件/shared.png')).toBe('shared');
     expect(await files.exists(path)).toBe(true);
   });
   it('refuses to purge a recycle entry changed after it was displayed', async () => {
     const { files, repo, snapshot } = await setup();
     await repo.delete(snapshot);
-    const entry = (await repo.listTrash()).entries[0]!;
+    const entry = (await repo.listTrash())[0]!;
     files.data.set('小记/回收站.md', (await files.read('小记/回收站.md')).replace(snapshot.body, '回收站外部修改'));
     await expect(repo.purgeTrash(entry)).rejects.toThrow(/conflict|invalidTrash/);
     expect(await files.exists('小记/回收站.md')).toBe(true);
@@ -272,8 +272,8 @@ describe('Safe repository operations', () => {
   it('retains readable recycle content when permanent removal fails', async () => {
     const { files, repo, snapshot } = await setup();
     await repo.delete(snapshot); const process = files.process.bind(files); files.process = async (p, fn) => { if (p.endsWith('/回收站.md')) throw Error('write failed'); await process(p, fn); };
-    const entry = (await repo.listTrash()).entries[0]!;
+    const entry = (await repo.listTrash())[0]!;
     await expect(repo.purgeTrash(entry)).rejects.toThrow();
-    expect((await repo.listTrash()).entries[0]!.memo.body).toBe(snapshot.body);
+    expect((await repo.listTrash())[0]!.memo.body).toBe(snapshot.body);
   });
 });
