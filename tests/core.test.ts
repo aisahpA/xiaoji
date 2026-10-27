@@ -4,6 +4,7 @@ import { dateFromId, fileForDate, groupKey, headingForDate, validateStorageSetti
 import { DEFAULT_SETTINGS, loadSettings, normalizeFolder, safeFileName } from '../src/core/settings';
 import { compileSearch, inView, selectMemos } from '../src/core/search';
 import { Repository } from '../src/core/repository';
+import { TrashStore } from '../src/core/trash-store';
 import type { FilePort, Memo, Settings } from '../src/core/types';
 
 const id = '20261021110727123';
@@ -180,7 +181,7 @@ describe('Safe repository operations', () => {
     const files = new MemoryFiles();
     const path = '小记/2610小记.md';
     files.data.set(path, '# 不相关前文\n\n' + serializeMemo(id, body) + '\n\n## 保留\n\n其他内容');
-    const repo = new Repository(files, settings, () => new Date(2026, 9, 21, 12, 30, 40, 123));
+    const repo = new Repository(files, new TrashStore(files, () => settings().folder), settings, () => new Date(2026, 9, 21, 12, 30, 40, 123));
     await repo.scan();
     return { files, repo, snapshot: repo.records[0]!, path };
   };

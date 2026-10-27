@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Repository } from '../src/core/repository';
+import { TrashStore } from '../src/core/trash-store';
 import { serializeMemo } from '../src/core/markdown';
 import { loadSettings } from '../src/core/settings';
 import { FixtureFiles } from './fixture';
@@ -21,7 +22,7 @@ async function setup(): Promise<{ files: RevisableFiles; repo: Repository }> {
   const files = new RevisableFiles();
   files.data.set(memoPath, memoFile('20261021120000001', '20261021110000002'));
   files.revisions.set(memoPath, 1);
-  return { files, repo: new Repository(files, () => settings, clock) };
+  return { files, repo: new Repository(files, new TrashStore(files, () => settings.folder), () => settings, clock) };
 }
 
 describe('Repository scan cache', () => {

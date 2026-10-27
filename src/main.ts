@@ -5,6 +5,7 @@ import {
 import { secretStore } from './core/secret-store';
 import { quickBounds, type WindowBounds } from './core/quick-window';
 import { Repository } from './core/repository';
+import { TrashStore } from './core/trash-store';
 import { Conversations } from './core/conversations';
 import { fileForDate, displayDate, timestamp, validateStorageSettings } from './core/dates';
 import { parseMemos } from './core/markdown';
@@ -129,7 +130,7 @@ export default class XiaojiPlugin extends Plugin {
     this.data = { schema: 1, settings: loadSettings(stored.settings), drafts, chatInputs,
       lastChatId: typeof stored.lastChatId === 'string' && /^\d{17}$/.test(stored.lastChatId) ? stored.lastChatId : undefined };
     this.files = new VaultFiles(this.app);
-    this.repo = new Repository(this.files, () => this.prefs);
+    this.repo = new Repository(this.files, new TrashStore(this.files, () => this.prefs.folder), () => this.prefs);
     const stateRoot = this.app.vault.configDir + '/plugins/' + this.manifest.id + '/conversations';
     const adapter = this.app.vault.adapter;
     const statePath = (id: string): string => { if (!/^\d{17}$/.test(id)) throw new MemoError('chatInvalid'); return stateRoot + '/' + id + '.json'; };
@@ -163,6 +164,7 @@ export default class XiaojiPlugin extends Plugin {
       if (isChatPath(file.path, this.prefs) && (!oldPath || isChatPath(oldPath, this.prefs))) return;
       const folder = this.prefs.folder;
       if (file.path === folder || file.path.startsWith(folder + '/') || oldPath === folder || oldPath?.startsWith(folder + '/')) {
+        if (file.path === folder + '/回收站.md' || oldPath === folder + '/回收站.md') this.repo.invalidateTrash();
         this.repo.invalidate(file.path); if (oldPath) this.repo.invalidate(oldPath); this.refreshSoon();
       }
     };

@@ -4,6 +4,7 @@ import { loadSettings } from '../src/core/settings';
 import { appendMemo, parseMemos, serializeMemo } from '../src/core/markdown';
 import { headingForDate, fileForDate, validateStorageSettings } from '../src/core/dates';
 import { Repository } from '../src/core/repository';
+import { TrashStore } from '../src/core/trash-store';
 import { FixtureFiles, makeFixture } from './fixture';
 import { AskPanel } from '../src/ui/chat-panel';
 import { compactQuickWindow } from '../src/ui/quick-chrome';
@@ -28,7 +29,7 @@ describe('heading-free storage', () => {
   it.each(['month', 'quarter', 'year'] as const)('keeps %s filenames and full record bodies without temporal headings', async period => {
     const prefs = loadSettings({ grouping: 'none', period }); const files = new FixtureFiles();
     let now = new Date(2026, 9, 21, 10);
-    const repo = new Repository(files, () => prefs, () => now);
+    const repo = new Repository(files, new TrashStore(files, () => prefs.folder), () => prefs, () => now);
     validateStorageSettings(prefs); expect(headingForDate(now, prefs)).toBe('');
     const one = await repo.create('# 正文标题\n\n- [ ] 任务');
     now = new Date(2026, 9, 22, 11); const two = await repo.create('第二条');

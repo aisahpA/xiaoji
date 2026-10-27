@@ -3,6 +3,7 @@ import { buildMigrationPrompt, reformatText } from '../src/core/maintenance';
 import { headingForDate, fileForDate } from '../src/core/dates';
 import { parseMemos, serializeMemo } from '../src/core/markdown';
 import { Repository } from '../src/core/repository';
+import { TrashStore } from '../src/core/trash-store';
 import { loadSettings } from '../src/core/settings';
 import type { Settings } from '../src/core/types';
 import { FixtureFiles, makeFixture } from './fixture';
@@ -212,7 +213,7 @@ describe('backed-up repository maintenance', () => {
     files.data.set('小记/_回收站/旧记录.md', serializeMemo('20261022110000001', '回收站记录'));
     files.data.set('小记/_格式备份/旧批次/备份.md', serializeMemo('20261022110000002', '备份不参与索引'));
     files.data.set('其他目录/原文.md', serializeMemo('20261022110000003', '目录外记录'));
-    const repo = new Repository(files, () => settings({ grouping: 'month' }));
+    const repo = new Repository(files, new TrashStore(files, () => settings({ grouping: 'month' }).folder), () => settings({ grouping: 'month' }));
     await repo.scan();
     expect(repo.records.map(memo => memo.path).sort()).toEqual([path, '小记/重复.md'].sort());
     const plan = await repo.planReformat();

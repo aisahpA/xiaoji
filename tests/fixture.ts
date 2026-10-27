@@ -1,5 +1,6 @@
 import type XiaojiPlugin from '../src/main';
 import { Repository } from '../src/core/repository';
+import { TrashStore } from '../src/core/trash-store';
 import { Conversations } from '../src/core/conversations';
 import { serializeMemo } from '../src/core/markdown';
 import { loadSettings } from '../src/core/settings';
@@ -30,7 +31,7 @@ export async function makeFixture(overrides: Partial<Settings> = {}): Promise<{ 
     serializeMemo('20261020180000004', '旧记录内容。\n\n#生活', { archived: true }),
   ].join('\n\n'));
   const data = { schema: 1, settings: loadSettings(overrides), drafts: {} as Record<string, Draft> };
-  const repo = new Repository(files, () => data.settings);
+  const repo = new Repository(files, new TrashStore(files, () => data.settings.folder), () => data.settings);
   const chats = new Conversations(files, () => data.settings.chatFolder, () => data.settings.folder);
   await repo.scan();
   const errors: unknown[] = [];

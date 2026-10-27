@@ -1,5 +1,5 @@
 import { sleep } from './timers';
-import { TrashFiles } from './trash-files';
+import { TrashStore, type TrashStoreEntry } from './trash-store';
 import { fileForDate, headingForDate, timestamp } from './dates';
 import { appendMemo, changeFlag, features, findUnchanged, parseMarkdown, parseMemos, replaceMemo, serializeMemo } from './markdown';
 import { normalizeFolder, safeSourcePath, isChatPath } from './settings';
@@ -9,20 +9,7 @@ import { FORMAT_BACKUPS, reformatText, reformatSettingsKey, type ReformatPlan } 
 
 export const TRASH_FOLDER = '_回收站';
 const trashRoot = (settings: Settings): string => normalizeFolder(settings.folder) + '/' + TRASH_FOLDER + '/';
-
-export function parseTrash(text: string, path: string): TrashEntry {
-  const metadata = /^---\r?\nxiaoji-trash: 1\r?\nsource: (".*")\r?\ndeletedAt: (".*")\r?\nstate: (backup|deleted)\r?\n---\r?\n\r?\n/.exec(text);
-  if (!metadata?.[1] || !metadata[2] || !metadata[3]) throw new MemoError('invalidTrash');
-  let source: unknown;
-  let deletedAt: unknown;
-  try { source = JSON.parse(metadata[1]); deletedAt = JSON.parse(metadata[2]); } catch { throw new MemoError('invalidTrash'); }
-  if (typeof source !== 'string' || typeof deletedAt !== 'string') throw new MemoError('invalidTrash');
-  safeSourcePath(source);
-  if (source.split('/').includes(TRASH_FOLDER)) throw new MemoError('invalidTrash');
-  const memos = parseMemos(text.slice(metadata[0].length), source);
-  if (memos.length !== 1 || !memos[0]) throw new MemoError('invalidTrash');
-  return { path, source, deletedAt, state: metadata[3] as TrashEntry['state'], memo: memos[0] };
-}
+const trashStorePath = (settings: Settings): string => normalizeFolder(settings.folder) + '/回收站.md';
 
 export class Repository {
   records: Memo[] = [];
@@ -33,15 +20,19 @@ export class Repository {
 
   constructor(
     files: FilePort,
+    private readonly trash: TrashStore,
     private readonly settings: () => Settings,
     private readonly clock: () => Date = () => new Date(),
-  ) { this.files = new TrashFiles(files, () => this.settings().folder); }
+  ) { this.files = files; }
   private readonly files: FilePort;
 
   invalidate(path?: string): void {
     if (path === undefined) this.cache.clear();
     else this.cache.delete(path);
   }
+
+  /** Discard the in-memory trash snapshot after an external store change. */
+  invalidateTrash(): void { this.trash.invalidate(); }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const result = this.tail.then(work, work);
@@ -58,7 +49,8 @@ export class Repository {
   async scan(): Promise<Memo[]> {
     const version = ++this.scanVersion;
     const prefix = normalizeFolder(this.settings().folder) + '/';
-    const paths = (await this.files.listMarkdown()).filter(path => path.startsWith(prefix) && !isChatPath(path, this.settings()) && !path.startsWith(trashRoot(this.settings())) && !path.startsWith(prefix + FORMAT_BACKUPS + '/'));
+    const store = trashStorePath(this.settings());
+    const paths = (await this.files.listMarkdown()).filter(path => path.startsWith(prefix) && !isChatPath(path, this.settings()) && !path.startsWith(trashRoot(this.settings())) && path !== store && !path.startsWith(prefix + FORMAT_BACKUPS + '/'));
     const present = new Set(paths);
     for (const path of this.cache.keys()) if (!present.has(path)) this.cache.delete(path);
     const result: Memo[] = [];
@@ -91,7 +83,7 @@ export class Repository {
       const settings = structuredClone(this.settings()), prefix = normalizeFolder(settings.folder) + '/';
       const plan: ReformatPlan = { settingsKey: reformatSettingsKey(settings), folder: settings.folder, files: [], skipped: [], unchanged: 0 };
       const paths = (await this.files.listMarkdown()).filter(path => path.startsWith(prefix) && !isChatPath(path, settings) && path.endsWith('.md') &&
-        !path.startsWith(prefix + TRASH_FOLDER + '/') && !path.startsWith(prefix + FORMAT_BACKUPS + '/')).sort();
+        !path.startsWith(prefix + TRASH_FOLDER + '/') && path !== trashStorePath(settings) && !path.startsWith(prefix + FORMAT_BACKUPS + '/')).sort();
       const sources: { path: string; text: string; ids: string[] }[] = [], ids = new Set<string>(), duplicates = new Set<string>();
       for (const path of paths) {
         const text = await this.files.read(path), memos = parseMemos(text, path);
@@ -239,13 +231,12 @@ export class Repository {
       findUnchanged(await this.files.read(snapshot.path), snapshot);
       const root = trashRoot(this.settings());
       const deletedAt = this.clock();
-      let path = root + snapshot.id + '-' + timestamp(deletedAt) + '.md';
+      let name = snapshot.id + '-' + timestamp(deletedAt) + '.md';
       let suffix = 1;
-      while (await this.files.exists(path)) path = root + snapshot.id + '-' + timestamp(deletedAt) + '-' + suffix++ + '.md';
-      const backup = '---\nxiaoji-trash: 1\nsource: ' + JSON.stringify(snapshot.path) +
-        '\ndeletedAt: ' + JSON.stringify(deletedAt.toISOString()) + '\nstate: backup\n---\n\n' + snapshot.raw + '\n';
+      while (await this.trash.get(name)) name = snapshot.id + '-' + timestamp(deletedAt) + '-' + suffix++ + '.md';
+      const entry: TrashStoreEntry = { name, source: snapshot.path, deletedAt: deletedAt.toISOString(), state: 'backup', raw: snapshot.raw };
       // Copy first. Cross-file operations are not atomic; a failed move must leave a readable backup.
-      await this.files.create(path, backup);
+      await this.trash.append(entry);
       try {
         await this.files.process(snapshot.path, current => {
           const target = findUnchanged(current, snapshot);
@@ -254,51 +245,64 @@ export class Repository {
       } catch { throw new MemoError('deleteBackupSaved'); }
       this.records = this.records.filter(memo => memo.key !== snapshot.key);
       this.invalidate(snapshot.path);
-      try { await this.files.process(path, current => current.replace('\nstate: backup\n', '\nstate: deleted\n')); }
+      let state: TrashStoreEntry['state'] = 'backup';
+      try { await this.trash.update(name, e => ({ ...e, state: 'deleted' })); state = 'deleted'; }
       catch { /* The readable backup remains recoverable even if its status update failed. */ }
-      return parseTrash(backup, path);
+      return { path: root + name, source: snapshot.path, deletedAt: entry.deletedAt, state, memo: snapshot };
     });
   }
 
   async listTrash(): Promise<{ entries: TrashEntry[]; damaged: string[] }> {
-    const paths = (await this.files.listMarkdown()).filter(path => path.startsWith(trashRoot(this.settings())));
+    const root = trashRoot(this.settings());
+    const storeEntries = await this.trash.list();
     const entries: TrashEntry[] = [];
     const damaged: string[] = [];
-    for (const path of paths) {
-      try { entries.push(parseTrash(await this.files.read(path), path)); }
-      catch { damaged.push(path); }
+    for (const e of storeEntries) {
+      try {
+        const memos = parseMemos(e.raw, e.source);
+        if (memos.length !== 1 || !memos[0]) throw new MemoError('invalidTrash');
+        entries.push({ path: root + e.name, source: e.source, deletedAt: e.deletedAt, state: e.state, memo: memos[0] });
+      } catch { damaged.push(root + e.name); }
     }
     return { entries: entries.sort((a, b) => b.deletedAt.localeCompare(a.deletedAt)), damaged };
   }
 
   purgeTrash(snapshot: TrashEntry): Promise<void> {
     return this.enqueue(async () => {
-      if (!snapshot.path.startsWith(trashRoot(this.settings()))) throw new MemoError('invalidTrash');
-      const entry = parseTrash(await this.files.read(snapshot.path), snapshot.path);
-      if (entry.memo.raw !== snapshot.memo.raw || entry.source !== snapshot.source || entry.deletedAt !== snapshot.deletedAt) throw new MemoError('conflict');
-      await this.files.remove(snapshot.path);
+      const root = trashRoot(this.settings());
+      if (!snapshot.path.startsWith(root)) throw new MemoError('invalidTrash');
+      const name = snapshot.path.slice(root.length);
+      const entry = await this.trash.get(name);
+      if (!entry) throw new MemoError('invalidTrash');
+      if (entry.raw !== snapshot.memo.raw || entry.source !== snapshot.source || entry.deletedAt !== snapshot.deletedAt) throw new MemoError('conflict');
+      await this.trash.remove(name);
     });
   }
 
   restore(snapshot: TrashEntry): Promise<Memo> {
     return this.enqueue(async () => {
-      const entry = parseTrash(await this.files.read(snapshot.path), snapshot.path);
-      if (entry.memo.raw !== snapshot.memo.raw || entry.source !== snapshot.source) throw new MemoError('conflict');
+      const root = trashRoot(this.settings());
+      if (!snapshot.path.startsWith(root)) throw new MemoError('invalidTrash');
+      const name = snapshot.path.slice(root.length);
+      const entry = await this.trash.get(name);
+      if (!entry) throw new MemoError('invalidTrash');
+      if (entry.raw !== snapshot.memo.raw || entry.source !== snapshot.source) throw new MemoError('conflict');
       const path = safeSourcePath(entry.source);
       await this.ensureFile(path);
       let restored: Memo | undefined;
       await this.files.process(path, current => {
-        if (parseMemos(current, path).some(memo => memo.id === entry.memo.id)) throw new MemoError('restoreDuplicate');
-        const next = appendMemo(current, entry.memo.raw, entry.memo.createdAt, this.settings(), headingForDate(entry.memo.createdAt, this.settings()));
-        restored = parseMemos(next, path).find(memo => memo.id === entry.memo.id);
+        if (parseMemos(current, path).some(memo => memo.id === snapshot.memo.id)) throw new MemoError('restoreDuplicate');
+        const next = appendMemo(current, entry.raw, snapshot.memo.createdAt, this.settings(), headingForDate(snapshot.memo.createdAt, this.settings()));
+        restored = parseMemos(next, path).find(memo => memo.id === snapshot.memo.id);
         if (!restored) throw new MemoError('invalidMarkdown');
         return next;
       });
       if (!restored) throw new MemoError('writeFailed');
       this.invalidate(path);
       this.records.push(restored);
-      try { await this.files.remove(entry.path); }
-      catch { throw new MemoError('restoreBackupRemains'); }
+      let removed = false;
+      try { removed = await this.trash.remove(name); } catch { throw new MemoError('restoreBackupRemains'); }
+      if (!removed) throw new MemoError('restoreBackupRemains');
       return restored;
     });
   }

@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest';
 import { makeFixture } from './fixture';
-import { TrashFiles } from '../src/core/trash-files';
 it('stores multiple deleted memos in one Markdown file without YAML and restores independently',async()=>{
  const {plugin,files}=await makeFixture();const originals=plugin.repo.records.slice(0,2);
  for(const m of originals)await plugin.repo.delete(m);
