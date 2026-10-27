@@ -1,7 +1,5 @@
 import esbuild from 'esbuild';
 import { builtinModules } from 'node:module';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { copyFileSync, mkdirSync, watch } from 'node:fs';
 
 // `dist/` 就是插件本身：main.js、manifest.json、styles.css。项目根只放源码。
@@ -17,7 +15,6 @@ mkdirSync(OUT_DIR, { recursive: true });
 const js = {
   entryPoints: ['src/main.ts'],
   bundle: true,
-  metafile: true,
   external: [
     'obsidian', 'electron', ...builtinModules,
     '@codemirror/autocomplete', '@codemirror/commands',
@@ -54,28 +51,6 @@ function writeManifest() {
   copyFileSync(MANIFEST, `${OUT_DIR}/${MANIFEST}`);
 }
 
-// 扫描打包进 bundle 的第三方依赖，生成 THIRD_PARTY_NOTICES.md 并把许可证追加到 main.js。
-// 只在非 watch 模式生成——watch 模式下每次重建都跑一遍不值得。
-async function generateNotices(metafile) {
-  const packages = new Set();
-  for (const input of Object.keys(metafile.inputs)) {
-    const match = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(input.replace(/\\/g, '/'));
-    if (match) packages.add(match[1]);
-  }
-  const notices = ['# Bundled third-party licenses', '', 'Host-provided dependencies are external to this bundle.', ''];
-  for (const name of [...packages].sort()) {
-    const folder = path.join('node_modules', name);
-    const pkg = JSON.parse(await fs.readFile(path.join(folder, 'package.json'), 'utf8'));
-    const license = (await fs.readdir(folder)).find(file => /^licen[sc]e(?:\.|$)/i.test(file));
-    if (!license) throw Error('Missing license text for bundled package: ' + name);
-    notices.push('## ' + name + ' ' + pkg.version, '', await fs.readFile(path.join(folder, license), 'utf8'), '');
-  }
-  const text = notices.join('\n');
-  await fs.writeFile('THIRD_PARTY_NOTICES.md', text);
-  const projectLicense = await fs.readFile('LICENSE', 'utf8');
-  await fs.appendFile(`${OUT_DIR}/main.js`, '\n/*!\n' + (projectLicense + '\n' + text).replace(/\*\//g, '* /') + '\n*/\n');
-}
-
 if (isWatch) {
   const ctx = await esbuild.context(js);
   await ctx.watch();
@@ -88,6 +63,5 @@ if (isWatch) {
 } else {
   writeManifest();
   await writeStyles();
-  const result = await esbuild.build(js);
-  await generateNotices(result.metafile);
+  await esbuild.build(js);
 }

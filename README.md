@@ -97,4 +97,4 @@ See [CHANGELOG.md](CHANGELOG.md) for changes and [REVIEW_NOTES.md](REVIEW_NOTES.
 
 ## 许可 · License
 
-[MIT](LICENSE) · [第三方许可 / Third-party notices](THIRD_PARTY_NOTICES.md)
+[MIT](LICENSE)
