@@ -39,8 +39,10 @@ export interface Settings {
   submitKey: string;
   newlineKey: string;
   quickPin: boolean;
-  /** Electron accelerator for the system-wide quick capture shortcut; empty disables it. */
-  quickHotkey: string;
+  /** 快速记录组合键（如 `Mod-Shift-J`）；空字符串表示未设置。 */
+  captureKey: string;
+  /** 组合键是否全局生效（Obsidian 最小化后也能唤起）；关闭时只在 Obsidian 内响应。 */
+  captureGlobal: boolean;
   chatFolder: string;
   chatFolders?: string[];
   language: Language;

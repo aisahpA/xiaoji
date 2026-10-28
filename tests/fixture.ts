@@ -89,7 +89,7 @@ export async function makeFixture(overrides: Partial<Settings> = {}): Promise<{ 
     quote: (memo: any) => '> ' + memo.body,
     clipboard: async () => undefined,
     openSource: async () => undefined,
-    openQuick: async () => undefined, openHotkeys: () => undefined,
+    openQuick: async () => undefined, captureStatus: () => 'captureOff', pauseGlobalCapture: () => () => undefined,
     watchQuickBounds: () => () => undefined,
     syncQuickWindow: () => undefined,
     quickWindowControls: () => false, quickWindowMaximized: () => false, quickWindowAction: () => undefined,

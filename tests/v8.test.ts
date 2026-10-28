@@ -74,8 +74,8 @@ describe('automatic setting commits', () => {
     const { plugin, row, go } = await settings({ aiEnabled: true }); await go('AI'); const endpoint = row('兼容服务地址').querySelector('input')!, before = plugin.prefs.aiBaseUrl;
     input(endpoint, 'file:///secret'); endpoint.dispatchEvent(new Event('blur')); await tick(); expect(plugin.prefs.aiBaseUrl).toBe(before); expect(endpoint.getAttribute('aria-invalid')).toBe('true');
   });
-  it('removes redundant general rows and retains the hotkey action', async () => {
-    const { row, go, tab } = await settings(); await go('通用'); expect(row('回收站')).toBeUndefined(); expect(tab.containerEl.textContent).not.toContain('纯 Markdown'); expect(tab.containerEl.textContent).not.toContain('xiaoji 0.'); expect(row('快速记录').querySelector('button')?.textContent).toBe('设置快捷键');
+  it('removes redundant general rows and keeps the global capture recorder', async () => {
+    const { row, go, tab } = await settings(); await go('通用'); expect(row('回收站')).toBeUndefined(); expect(tab.containerEl.textContent).not.toContain('纯 Markdown'); expect(tab.containerEl.textContent).not.toContain('xiaoji 0.'); expect(row('快速记录').querySelector('button')?.textContent).toBe('未设置'); expect(row('全局快捷键')).toBeUndefined();
   });
 });
 describe('serialized settings persistence', () => {

@@ -15,6 +15,10 @@ export function eventShortcut(event: KeyboardEvent, mac: boolean): string | null
   if (mac ? event.ctrlKey : event.metaKey) return null;
   return normalizeShortcut([(mac ? event.metaKey : event.ctrlKey) ? 'Mod' : '', event.altKey ? 'Alt' : '', event.shiftKey ? 'Shift' : '', key].filter(Boolean).join('-'));
 }
+export function normalizeGlobalShortcut(value: unknown): string | null {
+  const chord = normalizeShortcut(value);
+  return chord && /^(?:Mod|Alt)(?:-|$)/.test(chord) ? chord : null;
+}
 export function normalizeInputKeys(submit: unknown, newline: unknown): { submitKey: string; newlineKey: string } {
   const submitKey = normalizeShortcut(submit) ?? 'Shift-Enter';
   let newlineKey = normalizeShortcut(newline) ?? (submitKey === 'Enter' ? 'Shift-Enter' : 'Enter');

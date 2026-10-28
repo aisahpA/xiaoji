@@ -15,7 +15,7 @@ A quiet, local-first memo plugin for Obsidian. Keep ideas, everyday moments and 
 | 原生 Markdown，支持标签、待办、附件、代码、表格与公式 | Native Markdown with tags, tasks, attachments, code, tables and math |
 | 列表与瀑布流、置顶、归档、层级标签、搜索与批量整理 | List and waterfall layouts, pins, archives, nested tags, search and batch actions |
 | 顶部与侧栏独立配置，拖动排序 | Configure top and sidebar navigation separately; drag to reorder |
-| 桌面快速记录小窗，可置顶并转回主页面继续编辑 | Desktop quick capture with always-on-top and transfer to the main composer |
+| 桌面快速记录小窗与全局快捷键，可置顶并转回主页面继续编辑 | Desktop quick capture with a global shortcut, always-on-top and transfer to the main composer |
 | 自定义存储、日期分组，Markdown 回收站与格式备份 | Flexible storage and date headings, Markdown Trash and formatting backups |
 | 可选 AI：检索小记、自定义提示词、保存或临时对话 | Optional AI with memo retrieval, custom prompts, saved or temporary chats |
 

@@ -423,6 +423,10 @@
 .xj-editor-source .cm-line, .xj-editor-source .cm-line span:not(.cm-placeholder) { color: var(--text-normal) !important; }
 .xj-shortcut-recorder { min-width: 150px; font-variant-numeric: tabular-nums; }
 .xj-shortcut-recorder[aria-pressed="true"] { border-color: var(--interactive-accent); color: var(--text-accent); }
+.xj-settings .xj-capture-setting .setting-item-control { gap: 10px; flex: 0 0 auto; flex-wrap: nowrap; }
+.xj-capture-setting .setting-item-info { flex: 1 1 auto; min-width: 0; }
+.xj-capture-scope { display: inline-flex; gap: 8px; align-items: center; white-space: nowrap; }
+.xj-capture-scope-label { color: var(--text-muted); font-size: var(--font-ui-small); white-space: nowrap; }
 
 /* One fixed-footprint action: processing state never adds rows to the dock. */
 .xj-chat-submit { flex: 0 0 auto; min-width: 64px; margin-left: auto; }

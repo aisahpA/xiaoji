@@ -6,7 +6,7 @@ import { fileForDate, headingForDate, validateStorageSettings } from '../core/da
 import { MemoError, type Settings } from '../core/types';
 import { isMessageKey, type MessageKey } from '../i18n';
 import { bindErrors, button, element, empty } from './dom';
-import { eventShortcut } from '../core/shortcuts';
+import { eventShortcut, normalizeGlobalShortcut } from '../core/shortcuts';
 import { shortcutLabel } from './submit';
 import { chatEndpoint, DEFAULT_AI_PROMPT } from '../core/ai';
 import { surfaceNavigation, reorderSurface, type NavSurface } from '../core/navigation';
@@ -23,6 +23,7 @@ export class XiaojiSettings extends PluginSettingTab {
   private preview: HTMLElement | null = null;
   private saves = new Set<AutoSave>();
   private sorter: NavigationSort | null = null;
+  private resumeCapture: (() => void) | null = null;
   constructor(app: App, private plugin: XiaojiPlugin) {
     super(app, plugin);
     bindErrors(this.containerEl, error => plugin.report(error));
@@ -31,6 +32,7 @@ export class XiaojiSettings extends PluginSettingTab {
   display(): void { this.render(); }
 
   private render(): void {
+    this.resumeCapture?.(); this.resumeCapture = null;
     const p = this.plugin; this.sorter?.destroy(); this.sorter = null;
     for (const save of this.saves) void save.close(); this.saves.clear();
     empty(this.containerEl); this.containerEl.classList.add('xj-settings');
@@ -51,7 +53,7 @@ export class XiaojiSettings extends PluginSettingTab {
 
   private redisplay(): void { const host = this.containerEl.closest<HTMLElement>('.vertical-tab-content') ?? this.containerEl; const scroll = host.scrollTop; this.render(); host.scrollTop = scroll; }
   private async flush(): Promise<void> { await Promise.all([...this.saves].map(save => save.flush())); }
-  hide(): void { this.sorter?.destroy(); this.sorter = null; for (const save of this.saves) void save.close(); this.saves.clear(); }
+  hide(): void { this.resumeCapture?.(); this.resumeCapture = null; this.sorter?.destroy(); this.sorter = null; for (const save of this.saves) void save.close(); this.saves.clear(); }
   private fieldError(input: HTMLElement, error?: unknown): void {
     const row = input.closest<HTMLElement>('.setting-item');
     if (!row) return;
@@ -297,26 +299,47 @@ export class XiaojiSettings extends PluginSettingTab {
     this.slider(advanced, 'maxCharacters', p.prefs.aiMaxCharacters, 2000, 80000, value => this.change({ aiMaxCharacters: value }));
   }
 
-  private shortcutSetting(panel: HTMLElement, field: 'submitKey' | 'newlineKey'): void {
+  private shortcutSetting(panel: HTMLElement, field: 'submitKey' | 'newlineKey' | 'captureKey'): void {
     const p = this.plugin;
-    new Setting(panel).setName(p.t(field)).addButton(control => {
+    const capture = field === 'captureKey';
+    const setting = new Setting(panel).setName(p.t(capture ? 'quickCapture' : field));
+    const status = (): void => { if (capture) setting.setDesc(p.t(Platform.isMobile ? 'quickShortcutHint' : 'captureScopeHint') + ' ' + p.t(p.captureStatus())); };
+    status();
+    if (capture) setting.settingEl.classList.add('xj-capture-setting');
+    setting.addButton(control => {
       let recording = false;
-      const label = (): void => { control.setButtonText(shortcutLabel(p.prefs[field], panel.ownerDocument)); control.buttonEl.setAttribute('aria-pressed', 'false'); };
+      const label = (): void => { control.setButtonText(p.prefs[field] ? shortcutLabel(p.prefs[field], panel.ownerDocument) : p.t('captureOff')); control.buttonEl.setAttribute('aria-pressed', 'false'); };
+      const resume = (): void => { this.resumeCapture?.(); this.resumeCapture = null; };
       label(); control.buttonEl.classList.add('xj-shortcut-recorder');
-      control.onClick(() => { recording = true; control.setButtonText(p.t('pressShortcut')); control.buttonEl.setAttribute('aria-pressed', 'true'); control.buttonEl.focus(); });
-      control.buttonEl.addEventListener('blur', () => { recording = false; label(); });
+      control.onClick(() => { if (capture && !recording) this.resumeCapture = p.pauseGlobalCapture(); recording = true; control.setButtonText(p.t('pressShortcut')); control.buttonEl.setAttribute('aria-pressed', 'true'); control.buttonEl.focus(); });
+      control.buttonEl.addEventListener('blur', () => { if (recording) { recording = false; resume(); label(); } });
       control.buttonEl.addEventListener('keydown', event => {
         if (!recording || event.isComposing || event.keyCode === 229) return;
         event.preventDefault(); event.stopPropagation();
-        if (event.key === 'Escape') { recording = false; label(); return; }
+        if (event.key === 'Escape') { recording = false; resume(); label(); return; }
         if (event.repeat || ['Control', 'Meta', 'Alt', 'Shift'].includes(event.key)) return;
         const chord = eventShortcut(event, (Platform.isMacOS || Platform.isIosApp));
         if (!chord) { p.report(new MemoError('invalidShortcut')); return; }
-        if (chord === p.prefs[field === 'submitKey' ? 'newlineKey' : 'submitKey']) { p.report(new MemoError('shortcutConflict')); return; }
+        if (capture && !normalizeGlobalShortcut(chord)) { p.report(new MemoError('invalidGlobalShortcut')); return; }
+        if (!capture && chord === p.prefs[field === 'submitKey' ? 'newlineKey' : 'submitKey']) { p.report(new MemoError('shortcutConflict')); return; }
         recording = false; control.setDisabled(true);
-        void p.updateSettings({ [field]: chord }).catch(error => p.report(error)).finally(() => { label(); control.setDisabled(false); });
+        resume();
+        void p.updateSettings({ [field]: chord }).catch(error => p.report(error)).finally(() => { label(); control.setDisabled(false); status(); });
       });
     });
+    if (capture) {
+      if (!Platform.isMobile) setting.addToggle(control => {
+        control.setValue(p.prefs.captureGlobal).setTooltip(p.t('captureGlobal'));
+        control.toggleEl.setAttribute('aria-label', p.t('captureGlobal'));
+        const scope = element(control.toggleEl.parentElement!, 'span', 'xj-capture-scope');
+        element(scope, 'span', 'xj-capture-scope-label', p.t('captureGlobal')); scope.append(control.toggleEl);
+        control.onChange(value => {
+          control.setDisabled(true);
+          void this.flush().then(() => p.updateSettings({ captureGlobal: value })).catch(error => p.report(error)).finally(() => { control.setValue(p.prefs.captureGlobal); control.setDisabled(false); status(); });
+        });
+      });
+      setting.addExtraButton(control => control.setIcon('x').setTooltip(p.t('clear')).onClick(() => this.change({ captureKey: '' }, true)));
+    }
   }
   private general(panel: HTMLElement): void {
     const p = this.plugin;
@@ -329,13 +352,8 @@ export class XiaojiSettings extends PluginSettingTab {
       .addExtraButton(control => control.setIcon('arrow-right-left').setTooltip(p.t('swapInputKeys')).onClick(() => this.change({ submitKey: p.prefs.newlineKey, newlineKey: p.prefs.submitKey }, true)))
       .addExtraButton(control => control.setIcon('rotate-ccw').setTooltip(p.t('restoreDefaults')).onClick(() => this.change({ submitKey: 'Shift-Enter', newlineKey: 'Enter' }, true)));
     this.shortcutSetting(panel, 'submitKey'); this.shortcutSetting(panel, 'newlineKey');
-    new Setting(panel).setName(p.t('quickCapture')).setDesc(p.t('quickShortcutHint')).addButton(control => control.setButtonText(p.t('configureHotkeys')).onClick(() => p.openHotkeys()));
+    this.shortcutSetting(panel, 'captureKey');
     new Setting(panel).setName(p.t('quickPin')).addToggle(control => control.setValue(p.prefs.quickPin).onChange(value => this.change({ quickPin: value })));
-    new Setting(panel).setName(p.t('quickHotkey')).setDesc(p.t('quickHotkeyHint')).addText(text => {
-      const input = text.inputEl;
-      text.setPlaceholder('CommandOrControl+Shift+J').setValue(p.prefs.quickHotkey);
-      this.autoText(input, async value => { await p.updateSettings({ quickHotkey: value.trim() }); });
-    });
     new Setting(panel).setName(p.t('language')).addDropdown(dropdown =>
       dropdown.addOption('auto', p.t('auto')).addOption('zh', '简体中文').addOption('en', 'English')
         .setValue(p.prefs.language).onChange(value => this.change({ language: value as Settings['language'] }, true)));

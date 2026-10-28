@@ -4,6 +4,7 @@ import {
 } from 'obsidian';
 import { secretStore } from './core/secret-store';
 import { quickBounds, type WindowBounds } from './core/quick-window';
+import { CaptureShortcut, type CaptureStatus } from './core/capture-shortcut';
 import { Repository } from './core/repository';
 import { TrashStore } from './core/trash-store';
 import { Conversations } from './core/conversations';
@@ -95,7 +96,24 @@ export default class XiaojiPlugin extends Plugin {
   private tagCache: string[] | null = null;
   private stopped = false;
   private openingQuick: Promise<void> | null = null;
-  private quickHotkeyRegistered: string | null = null;
+  private capture = new CaptureShortcut({
+    desktop: !Platform.isMobile,
+    mac: Platform.isMacOS || Platform.isIosApp,
+    settings: () => this.prefs,
+    documents: () => {
+      const docs = [this.app.workspace.containerEl.ownerDocument];
+      this.app.workspace.iterateAllLeaves(leaf => {
+        const doc = leaf.view.containerEl.ownerDocument;
+        if (!docs.includes(doc)) docs.push(doc);
+      });
+      return docs;
+    },
+    capture: () => { if (!this.stopped) void this.openQuick().catch(error => this.report(error)); },
+    report: error => { this.report(error); },
+    onWindowOpen: callback => { this.registerEvent(this.app.workspace.on('window-open', (_host, win) => callback(win))); },
+    onWindowClose: callback => { this.registerEvent(this.app.workspace.on('window-close', (_host, win) => callback(win))); },
+    keep: dispose => { this.register(dispose); },
+  });
   private initialScanStarted = false;
   loading = true;
   readError = false;
@@ -130,6 +148,7 @@ export default class XiaojiPlugin extends Plugin {
     this.addRibbonIcon('notebook-pen', this.t('openWorkspace'), () => { void this.openView().catch(error => this.report(error)); });
     this.addCommand({ id: 'open', name: this.t('openWorkspace'), callback: () => { void this.openView().catch(error => this.report(error)); } });
     this.addCommand({ id: 'capture', name: this.t('quickCapture'), callback: () => { void this.openQuick().catch(error => this.report(error)); } });
+    this.capture.install();
     this.addCommand({ id: 'search', name: this.t('search'), callback: () => { void this.openView().then(view => view.focusSearch()).catch(error => this.report(error)); } });
     this.addCommand({ id: 'recycle-bin', name: this.t('trash'), callback: () => { this.showTrash(); } });
     this.addCommand({ id: 'review', name: this.t('review'), checkCallback: checking => {
@@ -156,12 +175,12 @@ export default class XiaojiPlugin extends Plugin {
     this.registerEvent(this.app.vault.on('create', changed));
     this.registerEvent(this.app.vault.on('delete', changed));
     this.registerEvent(this.app.vault.on('rename', changed));
-    this.app.workspace.onLayoutReady(() => { this.setupQuickHotkey(); });
+    this.app.workspace.onLayoutReady(() => { this.capture.initial(); });
   }
 
   onunload(): void {
     this.stopped = true;
-    this.clearQuickHotkey();
+    this.capture.dispose();
     if (this.refreshTimer) window.clearTimeout(this.refreshTimer);
     this.subscribers.clear();
     this.sessionApiKey = '';
@@ -197,10 +216,15 @@ export default class XiaojiPlugin extends Plugin {
     if (notes === chats || notes.startsWith(chats + '/')) throw new MemoError('invalidFolder');
     if (validateStorage) validateStorageSettings(next);
     const previous = this.data.settings;
+    const changedKey = this.capture.changed(next, previous);
+    if (changedKey) this.capture.apply(next);
     this.data.settings = next;
     try { await this.persist(); }
-    catch (error) { this.data.settings = previous; throw error; }
-    if (next.quickHotkey !== previous.quickHotkey) this.setupQuickHotkey();
+    catch (error) {
+      this.data.settings = previous;
+      if (changedKey) this.capture.rollback(previous);
+      throw error;
+    }
     this.tagCache = null;
     if (next.folder !== previous.folder || next.chatFolder !== previous.chatFolder) await this.refresh();
     else this.notify();
@@ -337,37 +361,9 @@ export default class XiaojiPlugin extends Plugin {
     } catch { /* Keep native window chrome available if the bridge is unavailable. */ }
     new Notice(this.t('windowUnavailable'));
   }
-  private quickShortcutApi(): { register(accelerator: string, callback: () => void): boolean; unregister(accelerator: string): void } | null {
-    try {
-      const remote = (window as Window & { require?: (id: string) => unknown }).require?.('@electron/remote') as {
-        globalShortcut?: { register(accelerator: string, callback: () => void): boolean; unregister(accelerator: string): void };
-      } | undefined;
-      return remote?.globalShortcut ?? null;
-    } catch { return null; }
-  }
-  private clearQuickHotkey(): void {
-    const registered = this.quickHotkeyRegistered;
-    this.quickHotkeyRegistered = null;
-    if (!registered) return;
-    try { this.quickShortcutApi()?.unregister(registered); } catch { /* The shortcut bridge may already be gone. */ }
-  }
-  private setupQuickHotkey(): void {
-    this.clearQuickHotkey();
-    if (Platform.isMobile) return;
-    const hotkey = this.prefs.quickHotkey.trim();
-    if (!hotkey) return;
-    const shortcut = this.quickShortcutApi();
-    if (!shortcut) return;
-    try {
-      // Obsidian keeps its Electron main process alive when the last window closes, so a
-      // shortcut registered by the previous renderer can outlive it. register() would then fail
-      // with "already in use" even though the binding is ours. Reclaiming the accelerator first
-      // clears that stale entry; other applications are unaffected by unregister().
-      try { shortcut.unregister(hotkey); } catch { /* Nothing was registered for this accelerator. */ }
-      if (shortcut.register(hotkey, () => { void this.openQuick().catch(error => this.report(error)); })) { this.quickHotkeyRegistered = hotkey; return; }
-      new Notice(this.t('quickHotkeyBusy'), 8000);
-    } catch { new Notice(this.t('quickHotkeyInvalid'), 8000); }
-  }
+  captureStatus(): CaptureStatus { return this.capture.status(); }
+  /** 录制快捷键时临时停用全局响应，返回幂等的恢复函数。 */
+  pauseGlobalCapture(): () => void { return this.capture.pause(); }
   async openQuick(): Promise<void> {
     if (Platform.isMobile) { await this.openView().then(view => view.focusComposer()); return; }
     if (this.openingQuick) return this.openingQuick;
@@ -676,12 +672,6 @@ export default class XiaojiPlugin extends Plugin {
 
   showTrash(): void { void this.openView().then(view => view.navigate('trash')).catch(error => this.report(error)); }
   showReview(): void { if (this.prefs.reviewEnabled) new ReviewModal(this).open(); }
-  openHotkeys(): void {
-    const settings = (this.app as App & { setting?: { open(): void; openTabById(id: string): unknown; activeTab?: { searchComponent?: { setValue(value: string): unknown; onChanged?(): void }; setQuery?(value: string): void } } }).setting;
-    settings?.open(); settings?.openTabById('hotkeys');
-    const tab = settings?.activeTab;
-    tab?.searchComponent?.setValue('xiaoji'); if (tab?.setQuery) tab.setQuery('xiaoji'); else tab?.searchComponent?.onChanged?.();
-  }
   showAi(): void { if (this.prefs.aiEnabled) void this.openView().then(view => view.navigate('ask')).catch(error => this.report(error)); }
   showEdit(memo?: Memo): void { void this.openView().then(view => memo ? view.editMemo(memo) : view.focusComposer()).catch(error => this.report(error)); }
   async openMemo(id: string): Promise<void> {
