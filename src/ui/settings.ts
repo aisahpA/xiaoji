@@ -14,6 +14,7 @@ import { NavigationSort, sortable } from './navigation-sort';
 import { AutoSave } from './auto-save';
 import { buildMigrationPrompt } from '../core/maintenance';
 import { ReformatModal } from './maintenance';
+import type { CodexInfo } from '../core/codex';
 
 type Section = 'storage' | 'appearance' | 'navigation' | 'enhancements' | 'general';
 
@@ -24,6 +25,9 @@ export class XiaojiSettings extends PluginSettingTab {
   private saves = new Set<AutoSave>();
   private sorter: NavigationSort | null = null;
   private resumeCapture: (() => void) | null = null;
+  private codexInfo: CodexInfo | null = null;
+  private codexInfoPath: string | null = null;
+  private codexProbe: AbortController | null = null;
   constructor(app: App, private plugin: XiaojiPlugin) {
     super(app, plugin);
     bindErrors(this.containerEl, error => plugin.report(error));
@@ -33,6 +37,7 @@ export class XiaojiSettings extends PluginSettingTab {
 
   private render(): void {
     this.resumeCapture?.(); this.resumeCapture = null;
+    this.codexProbe?.abort(); this.codexProbe = null;
     const p = this.plugin; this.sorter?.destroy(); this.sorter = null;
     for (const save of this.saves) void save.close(); this.saves.clear();
     empty(this.containerEl); this.containerEl.classList.add('xj-settings');
@@ -53,7 +58,7 @@ export class XiaojiSettings extends PluginSettingTab {
 
   private redisplay(): void { const host = this.containerEl.closest<HTMLElement>('.vertical-tab-content') ?? this.containerEl; const scroll = host.scrollTop; this.render(); host.scrollTop = scroll; }
   private async flush(): Promise<void> { await Promise.all([...this.saves].map(save => save.flush())); }
-  hide(): void { this.resumeCapture?.(); this.resumeCapture = null; this.sorter?.destroy(); this.sorter = null; for (const save of this.saves) void save.close(); this.saves.clear(); }
+  hide(): void { this.resumeCapture?.(); this.resumeCapture = null; this.codexProbe?.abort(); this.codexProbe = null; this.sorter?.destroy(); this.sorter = null; for (const save of this.saves) void save.close(); this.saves.clear(); }
   private fieldError(input: HTMLElement, error?: unknown): void {
     const row = input.closest<HTMLElement>('.setting-item');
     if (!row) return;
@@ -261,6 +266,107 @@ export class XiaojiSettings extends PluginSettingTab {
     new Setting(panel).setName('AI').setDesc(p.t('aiHint')).addToggle(toggle =>
       toggle.setValue(p.prefs.aiEnabled).onChange(value => this.change({ aiEnabled: value }, true)));
     if (!p.prefs.aiEnabled) return;
+    new Setting(panel).setName(p.t('aiProvider')).addDropdown(control => control
+      .addOption('api', p.t('apiProvider')).addOption('codex', p.t('codexProvider')).setValue(p.prefs.aiProvider)
+      .onChange(value => {
+        if (value === 'codex' && Platform.isMobile) { control.setValue(p.prefs.aiProvider); p.report(new MemoError('codexDesktopOnly')); return; }
+        this.change({ aiProvider: value as Settings['aiProvider'] }, true);
+      }));
+    if (p.prefs.aiProvider === 'codex') this.codexConnection(panel);
+    else this.apiConnection(panel);
+    new Setting(panel).setName(p.t('saveConversations')).setDesc(p.t('saveConversationsHint')).addToggle(control => control.setValue(p.prefs.saveConversations).onChange(value => this.change({ saveConversations: value }, true)));
+    if (p.prefs.saveConversations) {
+      new Setting(panel).setName(p.t('chatFolder')).addText(control => {
+        control.setValue(p.prefs.chatFolder);
+        this.autoText(control.inputEl, value => p.updateSettings({ chatFolder: normalizeFolder(value) }));
+      });
+    }
+    new Setting(panel).setName(p.t('memoAccess')).addDropdown(control => control.addOption('auto', p.t('memoAuto')).addOption('strict', p.t('memoStrict')).addOption('off', p.t('memoOff')).setValue(p.prefs.aiMemoMode).onChange(value => this.change({ aiMemoMode: value as Settings['aiMemoMode'] })));
+    const advanced = element(panel, 'details', 'xj-settings-advanced');
+    element(advanced, 'summary', '', p.t('aiAdvanced'));
+    element(advanced, 'p', 'xj-hint', p.t('aiHowItWorks'));
+    new Setting(advanced).setName(p.t('systemPrompt')).setDesc(p.t('systemPromptHint'))
+      .addTextArea(control => { control.setValue(p.prefs.aiSystemPrompt || DEFAULT_AI_PROMPT + (p.prefs.aiInstructions ? '\n' + p.prefs.aiInstructions : '')); this.autoText(control.inputEl, value => p.updateSettings({ aiSystemPrompt: value })); control.inputEl.maxLength = 12000; control.inputEl.rows = 9; control.inputEl.classList.add('xj-system-prompt'); })
+      .addExtraButton(control => control.setIcon('rotate-ccw').setTooltip(p.t('restoreDefaults')).onClick(() => { this.change({ aiSystemPrompt: '', aiInstructions: '' }, true); }));
+    this.slider(advanced, 'maxEvidence', p.prefs.aiMaxMemos, 1, 40, value => this.change({ aiMaxMemos: value }));
+    this.slider(advanced, 'maxCharacters', p.prefs.aiMaxCharacters, 2000, 80000, value => this.change({ aiMaxCharacters: value }));
+  }
+
+  private codexConnection(panel: HTMLElement): void {
+    const p = this.plugin;
+    if (Platform.isMobile) { element(panel, 'p', 'xj-hint', p.t('codexDesktopOnly')); return; }
+    element(panel, 'p', 'xj-hint', p.t('codexHint'));
+    if (this.codexInfoPath !== p.prefs.codexPath) { this.codexInfo = null; this.codexInfoPath = p.prefs.codexPath; }
+    let modelControl: HTMLSelectElement;
+    let probeStatus: HTMLElement | null = null;
+    const stopProbe = (): void => { this.codexProbe?.abort(); this.codexProbe = null; if (probeStatus) probeStatus.textContent = ''; };
+    const drawDetails = (): void => {
+      empty(details); const info = this.codexInfo; if (!info) return;
+      const values: [MessageKey, string | undefined][] = [
+        ['codexRuntimePath', info.runtime?.path], ['codexRuntimeVersion', info.runtime?.version],
+        ['codexRuntimeSource', info.runtime ? p.t(info.runtime.source === 'desktop' ? 'codexSourceDesktop' : info.runtime.source === 'configured' ? 'codexSourceConfigured' : 'codexSourcePath') : undefined],
+        ['codexSignInMethod', info.signIn ? p.t(info.signIn === 'chatgpt' ? 'codexLoginChatGPT' : info.signIn === 'apiKey' ? 'apiKey' : 'codexLoginExternal') : undefined],
+        ['codexProviderId', info.provider], ['codexRuntimeHome', info.runtime?.home], ['codexConfiguredDefault', info.model],
+      ];
+      for (const [key, value] of values) if (value) { element(details, 'dt', '', p.t(key)); element(details, 'dd', '', value); }
+    };
+    const fillModels = (): void => {
+      modelControl.replaceChildren();
+      const defaultModel = this.codexInfo?.model;
+      const models = [{ id: '', name: p.t('codexDefault') + (defaultModel ? ' · ' + defaultModel : '') }, ...(this.codexInfo?.models ?? [])];
+      if (defaultModel && !models.some(model => model.id === defaultModel)) models.push({ id: defaultModel, name: defaultModel + ' · ' + p.t('codexConfiguredDefault') });
+      if (p.prefs.codexModel && !models.some(model => model.id === p.prefs.codexModel)) models.push({ id: p.prefs.codexModel, name: p.prefs.codexModel });
+      for (const model of models) { const option = modelControl.ownerDocument.createElement('option'); option.value = model.id; option.textContent = model.name; modelControl.append(option); }
+      modelControl.value = p.prefs.codexModel;
+    };
+    new Setting(panel).setName(p.t('model')).addDropdown(control => { modelControl = control.selectEl; fillModels(); control.onChange(value => { stopProbe(); this.change({ codexModel: value }); }); });
+    const connection = new Setting(panel).setName(p.t('codexConnect')).setDesc(p.t('codexCheckHint'));
+    const status = element(connection.infoEl, 'div', 'xj-connection-status'); status.setAttribute('role', 'status');
+    connection.addButton(control => control.setButtonText(p.t('codexConnect')).onClick(() => {
+      void (async () => {
+        control.setDisabled(true); status.textContent = p.t('codexChecking'); status.classList.remove('is-error');
+        try {
+          stopProbe();
+          await this.flush(); const info = await p.inspectCodex();
+          if (!control.buttonEl.isConnected) return;
+          this.codexInfo = info; fillModels(); drawDetails(); status.textContent = p.t('codexConnected');
+          if (!p.prefs.codexModel && info.model && !info.models.some(model => model.id === info.model)) status.textContent += '\n' + p.t('codexDefaultMissing');
+        } catch (error) {
+          if (status.isConnected) { status.classList.add('is-error'); status.textContent = p.t(error instanceof MemoError && isMessageKey(error.code) ? error.code : 'codexDisconnected'); }
+        } finally { control.setDisabled(false); }
+      })();
+    }));
+    const advanced = element(panel, 'details', 'xj-settings-advanced'); element(advanced, 'summary', '', p.t('codexAdvanced'));
+    const details = element(advanced, 'dl', 'xj-codex-details');
+    drawDetails();
+    new Setting(advanced).setName(p.t('codexPath')).setDesc(p.t('codexPathHint')).addText(control => {
+      control.setValue(p.prefs.codexPath); this.autoText(control.inputEl, async value => { stopProbe(); await p.updateSettings({ codexPath: value.trim() }); this.codexInfo = null; this.codexInfoPath = p.prefs.codexPath; fillModels(); drawDetails(); status.textContent = ''; });
+    });
+    new Setting(advanced).setName(p.t('codexCustomModel')).setDesc(p.t('codexCustomHint')).addText(control => {
+      control.setValue(p.prefs.codexModel); this.autoText(control.inputEl, async value => { stopProbe(); await p.updateSettings({ codexModel: value.trim() }); fillModels(); });
+    });
+    const validation = new Setting(advanced).setName(p.t('codexValidateModel')).setDesc(p.t('codexValidateHint'));
+    probeStatus = element(validation.infoEl, 'div', 'xj-connection-status'); probeStatus.setAttribute('role', 'status');
+    validation.addButton(control => control.setButtonText(p.t('codexValidateModel')).onClick(() => {
+      void (async () => {
+        stopProbe(); let controller: AbortController | undefined, timer: number | undefined;
+        control.setDisabled(true);
+        try {
+          await this.flush(); if (!control.buttonEl.isConnected) return;
+          controller = new AbortController(); this.codexProbe = controller;
+          probeStatus.textContent = p.t('codexChecking'); probeStatus.classList.remove('is-error');
+          timer = window.setTimeout(() => controller?.abort(), 45000);
+          await p.verifyCodexModel(controller.signal);
+          if (probeStatus?.isConnected && this.codexProbe === controller) probeStatus.textContent = p.t('codexModelReady');
+        }
+        catch (error) { if (probeStatus?.isConnected && (!controller || this.codexProbe === controller)) { probeStatus.classList.add('is-error'); probeStatus.textContent = p.t(controller?.signal.aborted ? 'codexTimeout' : error instanceof MemoError && isMessageKey(error.code) ? error.code : 'codexRequestFailed'); } }
+        finally { window.clearTimeout(timer); if (this.codexProbe === controller) this.codexProbe = null; control.setDisabled(false); }
+      })();
+    }));
+  }
+
+  private apiConnection(panel: HTMLElement): void {
+    const p = this.plugin;
     new Setting(panel).setName(p.t('endpoint')).addText(text => { text.setValue(p.prefs.aiBaseUrl); this.autoText(text.inputEl, value => { if (value.trim()) chatEndpoint(value); return p.updateSettings({ aiBaseUrl: value }); }); });
     new Setting(panel).setName(p.t('model')).addText(text => { text.setValue(p.prefs.aiModel); this.autoText(text.inputEl, value => p.updateSettings({ aiModel: value })); });
     let password!: TextComponent, secretSave!: AutoSave;
@@ -281,22 +387,6 @@ export class XiaojiSettings extends PluginSettingTab {
     key.addExtraButton(control => control.setIcon('x').setTooltip(p.t('clearSecret')).onClick(() => {
       password.setValue(''); secretSave.schedule(() => { p.setApiKey(''); password.setPlaceholder(''); this.fieldError(password.inputEl); }, true);
     }));
-    new Setting(panel).setName(p.t('saveConversations')).setDesc(p.t('saveConversationsHint')).addToggle(control => control.setValue(p.prefs.saveConversations).onChange(value => this.change({ saveConversations: value }, true)));
-    if (p.prefs.saveConversations) {
-      new Setting(panel).setName(p.t('chatFolder')).addText(control => {
-        control.setValue(p.prefs.chatFolder);
-        this.autoText(control.inputEl, value => p.updateSettings({ chatFolder: normalizeFolder(value) }));
-      });
-    }
-    new Setting(panel).setName(p.t('memoAccess')).addDropdown(control => control.addOption('auto', p.t('memoAuto')).addOption('strict', p.t('memoStrict')).addOption('off', p.t('memoOff')).setValue(p.prefs.aiMemoMode).onChange(value => this.change({ aiMemoMode: value as Settings['aiMemoMode'] })));
-    const advanced = element(panel, 'details', 'xj-settings-advanced');
-    element(advanced, 'summary', '', p.t('aiAdvanced'));
-    element(advanced, 'p', 'xj-hint', p.t('aiHowItWorks'));
-    new Setting(advanced).setName(p.t('systemPrompt')).setDesc(p.t('systemPromptHint'))
-      .addTextArea(control => { control.setValue(p.prefs.aiSystemPrompt || DEFAULT_AI_PROMPT + (p.prefs.aiInstructions ? '\n' + p.prefs.aiInstructions : '')); this.autoText(control.inputEl, value => p.updateSettings({ aiSystemPrompt: value })); control.inputEl.maxLength = 12000; control.inputEl.rows = 9; control.inputEl.classList.add('xj-system-prompt'); })
-      .addExtraButton(control => control.setIcon('rotate-ccw').setTooltip(p.t('restoreDefaults')).onClick(() => { this.change({ aiSystemPrompt: '', aiInstructions: '' }, true); }));
-    this.slider(advanced, 'maxEvidence', p.prefs.aiMaxMemos, 1, 40, value => this.change({ aiMaxMemos: value }));
-    this.slider(advanced, 'maxCharacters', p.prefs.aiMaxCharacters, 2000, 80000, value => this.change({ aiMaxCharacters: value }));
   }
 
   private shortcutSetting(panel: HTMLElement, field: 'submitKey' | 'newlineKey' | 'captureKey'): void {

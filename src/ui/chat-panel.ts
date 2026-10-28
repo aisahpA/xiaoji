@@ -1,14 +1,15 @@
 import { sleep } from '../core/timers';
 import { Component, MarkdownRenderer, Menu, Notice, setIcon } from 'obsidian';
 import type XiaojiPlugin from '../main';
-import { buildAssistantChat, DEFAULT_AI_PROMPT, ordinaryQuestion, modelQuestion, buildPlan, chatEndpoint, citedEvidence, parsePlan, retrieve, retrievePlanned, type SearchPlan, type Evidence, type ChatMessage } from '../core/ai';
+import { buildAssistantChat, DEFAULT_AI_PROMPT, ordinaryQuestion, modelQuestion, buildPlan, citedEvidence, parsePlan, retrieve, retrievePlanned, type SearchPlan, type Evidence, type ChatMessage } from '../core/ai';
 import { executeMemoQuery, localMemoQuery, queryScope } from '../core/query';
 import { reserveDockSpace } from './dock-inset';
 import { bindSubmit, shortcutLabel } from './submit';
 import { timestamp } from '../core/dates';
 import type { Conversation, ChatTurn } from '../core/conversations';
 import { MemoError } from '../core/types';
-import { complete } from './ask';
+import type { AIBackend } from './ai-backend';
+import { isMessageKey } from '../i18n';
 import { button, element, empty } from './dom';
 import { TextModal } from './modals';
 
@@ -316,18 +317,18 @@ export class AskPanel extends Component {
     const p = this.plugin, question = this.question.value.trim();
     const mode = this.mode;
     const local = mode === 'off' ? null : localMemoQuery(question);
-    const identity = modelQuestion(question) && p.prefs.aiModel.trim() ? (p.locale === 'zh' ? '当前配置的模型是 **' + p.prefs.aiModel.replace(/[\r\n*`]/g, '') + '**。这是服务请求中的模型标识，实际模型映射由服务提供方决定。' : 'The configured model is **' + p.prefs.aiModel.replace(/[\r\n*`]/g, '') + '**. The service provider controls the actual model mapping.') : '';
+    const model = p.prefs.aiProvider === 'codex' ? p.prefs.codexModel : p.prefs.aiModel;
+    const identity = modelQuestion(question) ? p.prefs.aiProvider === 'codex' && !model ? p.t('codexDefaultIdentity') : model.trim() ? (p.locale === 'zh' ? '当前配置的模型是 **' + model.replace(/[\r\n*`]/g, '') + '**。这是服务请求中的模型标识，实际模型映射由服务提供方决定。' : 'The configured model is **' + model.replace(/[\r\n*`]/g, '') + '**. The service provider controls the actual model mapping.') : '' : '';
     const direct = mode === 'off' || ordinaryQuestion(question) || Boolean(identity);
-    let endpoint = '', key = '';
-    try { if (!local && !identity) { endpoint = chatEndpoint(p.prefs.aiBaseUrl); key = p.apiKey(); if (!key || !p.prefs.aiModel) throw new MemoError('aiNotConfigured'); } }
-    catch { this.showError(p.t('aiNotConfigured')); return; }
+    let backend: AIBackend | undefined;
+    try { if (!local && !identity) backend = p.aiBackend(); }
+    catch (error) { this.showError(p.t(error instanceof MemoError && isMessageKey(error.code) ? error.code : 'aiNotConfigured')); return; }
     const controller = new AbortController(); this.controller = controller;
     this.setLocked(true);
     let reading = false;
     let turn: ChatTurn | undefined, timedOut = false;
-    const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, 120000);
+    const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, backend?.timeout ?? 120000);
     const signal = controller.signal;
-    const bridge = (): void => undefined;
     try {
       let records: XiaojiPlugin['repo']['records'] = [];
       if (local) { reading = true; records = await p.repo.scan(); reading = false; }
@@ -349,8 +350,8 @@ export class AskPanel extends Component {
       if (!local && !direct) {
         const planController = new AbortController(), abortPlan = (): void => planController.abort();
         signal.addEventListener('abort', abortPlan, { once: true });
-        const planTimer = window.setTimeout(abortPlan, 20000);
-        try { plan = parsePlan(await complete(endpoint, key, buildPlan(question, p.prefs.aiModel, history), planController.signal, () => undefined, bridge)); }
+        const planTimer = window.setTimeout(abortPlan, backend!.planTimeout);
+        try { plan = parsePlan(await backend!.complete(buildPlan(question, model, history), planController.signal, () => undefined)); }
         catch { signal.throwIfAborted(); }
         finally { window.clearTimeout(planTimer); signal.removeEventListener('abort', abortPlan); }
       }
@@ -385,12 +386,12 @@ export class AskPanel extends Component {
           const output = this.transcript.querySelectorAll<HTMLElement>('.xj-ai-answer');
           const live = output.item(output.length - 1);
           const coverage = q ? JSON.stringify({ totalMatching: candidates.length, supplied: evidence.length, scope }) : '';
-          turn.answer = await complete(endpoint, key, buildAssistantChat(question, evidence, p.prefs.aiModel, mode, p.prefs.aiSystemPrompt || (DEFAULT_AI_PROMPT + (p.prefs.aiInstructions ? '\n' + p.prefs.aiInstructions : '')), messages, coverage, retrievalFailed), signal, text => {
+          turn.answer = await backend!.complete(buildAssistantChat(question, evidence, model, mode, p.prefs.aiSystemPrompt || (DEFAULT_AI_PROMPT + (p.prefs.aiInstructions ? '\n' + p.prefs.aiInstructions : '')), messages, coverage, retrievalFailed), signal, text => {
             turn!.answer = text; if (!this.disposed && live) {
               const follow = this.transcript.scrollHeight - this.transcript.scrollTop - this.transcript.clientHeight < 60;
               live.textContent = text; if (follow) this.transcript.scrollTop = this.transcript.scrollHeight;
             }
-          }, bridge);
+          });
           signal.throwIfAborted();
           turn.sources = citedEvidence(turn.answer, evidence).map(source => JSON.parse(JSON.stringify(source)) as Evidence);
           turn.status = 'complete';
@@ -406,7 +407,7 @@ export class AskPanel extends Component {
       if (!this.disposed) {
         await this.draw();
         const message = signal.aborted ? (timedOut ? p.t('aiTimeout') : '') :
-          reading ? p.t('queryFailed') : error instanceof MemoError && error.code === 'chatConflict' ? p.t('chatConflict') : error instanceof MemoError && error.code === 'chatSaveFailed' ? p.t('chatSaveFailed') : p.t('aiRequestFailed');
+          reading ? p.t('queryFailed') : error instanceof MemoError && isMessageKey(error.code) ? p.t(error.code) : p.t('aiRequestFailed');
         if (message) this.showError(message); else this.status.textContent = '';
       }
     } finally {

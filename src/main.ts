@@ -18,6 +18,8 @@ import { MemoView, QuickView, VIEW_TYPE, QUICK_TYPE } from './ui/view';
 import { XiaojiSettings } from './ui/settings';
 import { ReviewModal } from './ui/modals';
 import { ReferencePreview } from './ui/references';
+import { CodexClient, type CodexInfo } from './core/codex';
+import { createAIBackend, type AIBackend } from './ui/ai-backend';
 
 interface QuickNativeWindow {
   isAlwaysOnTop(): boolean; setAlwaysOnTop(value: boolean): void;
@@ -93,6 +95,7 @@ export default class XiaojiPlugin extends Plugin {
   private draftTimer: number | null = null;
   private settingsTail: Promise<unknown> = Promise.resolve();
   private sessionApiKey = '';
+  private codexClient: CodexClient | null = null;
   private tagCache: string[] | null = null;
   private stopped = false;
   private openingQuick: Promise<void> | null = null;
@@ -181,6 +184,7 @@ export default class XiaojiPlugin extends Plugin {
   onunload(): void {
     this.stopped = true;
     this.capture.dispose();
+    this.codexClient?.dispose(); this.codexClient = null;
     if (this.refreshTimer) window.clearTimeout(this.refreshTimer);
     this.subscribers.clear();
     this.sessionApiKey = '';
@@ -225,10 +229,24 @@ export default class XiaojiPlugin extends Plugin {
       if (changedKey) this.capture.rollback(previous);
       throw error;
     }
+    if (next.codexPath !== previous.codexPath || next.aiProvider !== previous.aiProvider || !next.aiEnabled && previous.aiEnabled) { this.codexClient?.dispose(); this.codexClient = null; }
     this.tagCache = null;
     if (next.folder !== previous.folder || next.chatFolder !== previous.chatFolder) await this.refresh();
     else this.notify();
   }
+
+  private codex(): CodexClient {
+    if (Platform.isMobile) throw new MemoError('codexDesktopOnly');
+    return this.codexClient ??= new CodexClient(this.prefs.codexPath);
+  }
+  inspectCodex(): Promise<CodexInfo> { return this.codex().inspect(); }
+  async verifyCodexModel(signal: AbortSignal): Promise<void> {
+    await this.codex().complete({ model: this.prefs.codexModel, stream: true, messages: [
+      { role: 'system', content: 'This is a connection test. Reply only OK. Do not use tools.' },
+      { role: 'user', content: 'Reply OK.' },
+    ] }, signal, () => undefined);
+  }
+  aiBackend(): AIBackend { return createAIBackend(this.prefs, this.prefs.aiProvider === 'api' ? this.apiKey() : '', this.prefs.aiProvider === 'codex' ? this.codex() : undefined); }
 
   persist(): Promise<void> {
     if (this.draftTimer) { window.clearTimeout(this.draftTimer); this.draftTimer = null; }

@@ -67,6 +67,9 @@ export interface Settings {
   tagOrder: string[];
   reviewEnabled: boolean;
   aiEnabled: boolean;
+  aiProvider: 'api' | 'codex';
+  codexPath: string;
+  codexModel: string;
   aiBaseUrl: string;
   aiModel: string;
   aiInstructions: string;

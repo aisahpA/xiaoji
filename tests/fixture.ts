@@ -8,6 +8,7 @@ import { displayDate } from '../src/core/dates';
 import { resolveLanguage, translate, type MessageKey } from '../src/i18n';
 import { TFile } from './obsidian-mock';
 import type { Draft, FilePort, Settings } from '../src/core/types';
+import { createAIBackend } from '../src/ui/ai-backend';
 
 export class FixtureFiles implements FilePort {
   data = new Map<string, string>();
@@ -96,6 +97,7 @@ export async function makeFixture(overrides: Partial<Settings> = {}): Promise<{ 
     windowPinState: () => false, toggleWindowPin: () => false,
     recoverAttachment: () => undefined,
     apiKey: () => '',
+    aiBackend: () => createAIBackend(data.settings, plugin.apiKey()),
     setApiKey: () => undefined,
     persist: async () => undefined,
     addAttachment: async () => '![[附件.png]]',
