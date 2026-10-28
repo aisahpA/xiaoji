@@ -721,7 +721,16 @@ export class MemoView extends ItemView {
       if (feedback.scope === this.stateKey() && !this.filtered.some(memo => memo.id === feedback.memo.id)) this.filtered.push(feedback.memo);
     }
     if (this.completedFeedback.size) this.filtered.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt || a.id.localeCompare(b.id));
-    if (p.repo.duplicates.size) element(this.status, 'p', 'xj-hint', p.t('duplicateWarning', { count: p.repo.duplicates.size }));
+    if (p.repo.duplicates.size) {
+      element(this.status, 'p', 'xj-hint', p.t('duplicateWarning', { count: p.repo.duplicates.size }));
+      for (const id of [...p.repo.duplicates].sort()) {
+        for (const memo of p.repo.records.filter(item => item.id === id)) {
+          const preview = memo.body.replace(/\s+/g, ' ').trim();
+          const label = p.date(memo) + ' · ' + memo.path + (preview ? ' · ' + (preview.length > 40 ? preview.slice(0, 40) + '…' : preview) : '');
+          button(this.status, label, () => this.run(() => p.openSource(memo)), undefined, 'xj-text-button xj-duplicate-entry');
+        }
+      }
+    }
     const visible = this.filtered.slice(0, this.limit);
     const keep = new Set(visible.map(memo => memo.id));
     for (const [key, card] of this.cards) if (!keep.has(key)) { this.disposeCard(card); this.cards.delete(key); }

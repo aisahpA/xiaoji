@@ -297,6 +297,7 @@
 .xj-markdown a.tag { color: var(--text-accent); background: transparent; padding: 0; font-size: inherit; text-decoration: none; }
 .xj-empty { color: var(--text-faint); text-align: center; padding: 60px 20px; line-height: 1.7; }
 .xj-hint { color: var(--text-muted); font-size: var(--font-ui-small); line-height: 1.65; }
+.xj-duplicate-entry { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .xj-muted { color: var(--text-muted); }
 .xj-scope-chip { font-size: var(--font-ui-smaller); background: var(--background-secondary); border: none; box-shadow: none; border-radius: 5px; }
 .xj-sentinel { padding: 12px 0; text-align: center; }

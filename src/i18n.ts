@@ -112,7 +112,7 @@ const strings = {
   empty: ['从一个想法开始。', 'Start with a thought.'], noResults: ['没有匹配的小记', 'No matching memos'],
 
   loading: ['正在读取小记…', 'Loading memos…'], loadMore: ['继续浏览', 'Load more'],
-  duplicateWarning: ['发现 {count} 个重复时间戳。原文均已保留；请打开原文核对后再编辑。', '{count} duplicate timestamps found. All content is kept; inspect the source before editing.'],
+  duplicateWarning: ['发现 {count} 个重复时间戳，原文均已保留；点击下方条目定位，手动修正 ID 后再编辑。', '{count} duplicate timestamps; all content is kept. Click an entry to locate it and fix the ids by hand.'],
   refresh: ['重新读取', 'Refresh'],
 
   review: ['随便翻翻', 'Rediscover'], another: ['再翻一条', 'Another memo'],

@@ -574,7 +574,8 @@ export default class XiaojiPlugin extends Plugin {
     const text = await this.app.vault.read(file);
     const candidates = parseMemos(text, file.path).filter(memo => memo.id === snapshot.id);
     // Prefer the freshly parsed offset; the cached snapshot offset may have moved.
-    const memo = candidates[0];
+    // With duplicate ids, pick the copy whose text matches so each one opens in place.
+    const memo = candidates.length === 1 ? candidates[0] : candidates.find(candidate => candidate.raw === snapshot.raw);
     const start = memo?.start ?? text.indexOf(snapshot.raw);
     const line = start >= 0 ? text.slice(0, start).split('\n').length - 1 : 0;
     const leaf = this.app.workspace.getLeaf('tab');
