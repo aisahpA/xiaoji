@@ -561,11 +561,15 @@ export default class XiaojiPlugin extends Plugin {
   async openSource(snapshot: Memo): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(snapshot.path);
     if (!(file instanceof TFile)) throw new MemoError('conflict');
-    const candidates = parseMemos(await this.app.vault.read(file), file.path).filter(memo => memo.id === snapshot.id);
-    const memo = candidates.length === 1 ? candidates[0]! : candidates[snapshot.occurrence] ?? snapshot;
+    const text = await this.app.vault.read(file);
+    const candidates = parseMemos(text, file.path).filter(memo => memo.id === snapshot.id);
+    // Prefer the freshly parsed offset; the cached snapshot offset may have moved.
+    const memo = candidates.length === 1 ? candidates[0] : candidates[snapshot.occurrence];
+    const start = memo?.start ?? text.indexOf(snapshot.raw);
+    const line = start >= 0 ? text.slice(0, start).split('\n').length - 1 : 0;
     const leaf = this.app.workspace.getLeaf('tab');
-    await leaf.openFile(file, { active: true, eState: { line: memo.line } });
-    leaf.setEphemeralState({ line: memo.line });
+    await leaf.openFile(file, { active: true, eState: { line } });
+    leaf.setEphemeralState({ line });
   }
 
   memoLink(memo: Memo): string {

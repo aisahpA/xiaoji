@@ -101,7 +101,7 @@ export function parseMemos(text: string, path: string): Memo[] {
       occurrences.set(match[1], occurrence + 1);
       result.push({
         id: match[1], key: path + '::' + match[1] + '::' + occurrence, path,
-        body, raw, header, start, end, occurrence, line: item.position.start.line - 1,
+        body, raw, header, start, occurrence,
         createdAt, archived: /(?:^|\s)×(?:\s|$)/.test(tail),
         pinned: /(?:^|\s)↑(?:\s|$)/.test(tail),
         blockId: /(?:^|\s)\^([A-Za-z0-9-]+)(?:\s|$)/.exec(tail)?.[1] ?? null,
@@ -128,8 +128,7 @@ export function findUnchanged(text: string, snapshot: Memo): Memo {
     // Guard against duplicate ids: a regex header count is far cheaper than a full parse.
     const idHeader = new RegExp('^- ' + snapshot.id + '(?:[ \\t]|$)', 'gm');
     if ((text.match(idHeader) ?? []).length > 1) throw new MemoError('conflict');
-    const end = start + snapshot.raw.length;
-    return { ...snapshot, start, end, line: text.slice(0, start).split('\n').length - 1 };
+    return { ...snapshot, start };
   }
   // The raw text is gone (e.g. external edit or deletion). Re-parse to decide.
   const candidates = parseMemos(text, snapshot.path).filter(memo => memo.id === snapshot.id);
@@ -143,15 +142,13 @@ export function replaceMemo(text: string, snapshot: Memo, body: string): { text:
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   // Preserve unknown header tokens and the original identity.
   const replacement = current.header + eol + body.replace(/\r\n/g, '\n').split('\n').map(line => '  ' + line).join(eol);
-  const next = text.slice(0, current.start) + replacement + text.slice(current.end);
+  const next = text.slice(0, current.start) + replacement + text.slice(current.start + current.raw.length);
   const memo: Memo = {
     ...snapshot,
     body,
     raw: replacement,
     header: current.header,
     start: current.start,
-    end: current.start + replacement.length,
-    line: next.slice(0, current.start).split('\n').length - 1,
     ...features(body),
   };
   return { text: next, memo };
@@ -169,7 +166,6 @@ export function changeFlag(text: string, snapshot: Memo, flag: '×' | '↑', ena
     raw,
     header,
     start: current.start,
-    end: current.end + (header.length - current.header.length),
     archived: flag === '×' ? enabled : snapshot.archived,
     pinned: flag === '↑' ? enabled : snapshot.pinned,
   };

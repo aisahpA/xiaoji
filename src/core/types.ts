@@ -10,9 +10,14 @@ export interface Memo {
   body: string;
   raw: string;
   header: string;
+  /**
+   * Offset into `path` at the revision this record was parsed from. It is a
+   * transient parse artifact, not a durable coordinate: unrelated edits shift it
+   * and cached records are never re-aligned. Read it only from a record that was
+   * just parsed from the same text; otherwise re-derive it with `text.indexOf(raw)`
+   * (see `findUnchanged`) before slicing or jumping.
+   */
   start: number;
-  end: number;
-  line: number;
   occurrence: number;
   createdAt: number;
   archived: boolean;

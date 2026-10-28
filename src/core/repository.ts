@@ -153,7 +153,7 @@ export class Repository {
 
   /**
    * Backfill the scan cache after a local write so the post-write refresh does
-   * not re-parse. Offsets (start/end/line) are intentionally NOT recomputed
+   * not re-parse. Offsets are intentionally NOT recomputed
    * here: they are derived on demand via `text.indexOf(raw)` in findUnchanged /
    * appendMemo, which avoids the stale-offset bug class entirely. The cache
    * only needs to keep body/raw/tags in sync with the written file.
@@ -193,12 +193,11 @@ export class Repository {
             const raw = serializeMemo(id, finalBody, {}, eol);
             const next = appendMemo(current, raw, date.valueOf(), settings, headingForDate(date, settings), existing);
             const start = next.indexOf(raw);
-            const end = start + raw.length;
             const occurrence = existing.filter(memo => memo.id === id).length;
             result = {
               id, key: path + '::' + id + '::' + occurrence, path,
               body: finalBody, raw, header: '- ' + id,
-              start, end, line: next.slice(0, start).split('\n').length - 1,
+              start,
               occurrence, createdAt: date.valueOf(),
               archived: false, pinned: false, blockId: null,
               ...features(finalBody),
@@ -286,7 +285,7 @@ export class Repository {
       try {
         await this.files.process(snapshot.path, current => {
           const target = findUnchanged(current, snapshot);
-          return current.slice(0, target.start) + current.slice(target.end);
+          return current.slice(0, target.start) + current.slice(target.start + target.raw.length);
         });
       } catch { throw new MemoError('deleteBackupSaved'); }
       this.records = this.records.filter(memo => memo.key !== snapshot.key);
@@ -324,14 +323,12 @@ export class Repository {
         if (existing.some(memo => memo.id === snapshot.memo.id)) throw new MemoError('restoreDuplicate');
         const next = appendMemo(current, entry.memo.raw, snapshot.memo.createdAt, this.settings(), headingForDate(snapshot.memo.createdAt, this.settings()), existing);
         const start = next.indexOf(entry.memo.raw);
-        const end = start + entry.memo.raw.length;
         const occurrence = existing.filter(memo => memo.id === snapshot.memo.id).length;
         restored = {
           ...snapshot.memo,
           path,
           key: path + '::' + snapshot.memo.id + '::' + occurrence,
-          start, end,
-          line: next.slice(0, start).split('\n').length - 1,
+          start,
           occurrence,
         };
         allMemos = [...existing, restored].sort((a, b) => next.indexOf(a.raw) - next.indexOf(b.raw));
