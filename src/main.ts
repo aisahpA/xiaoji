@@ -109,24 +109,7 @@ export default class XiaojiPlugin extends Plugin {
   async onload(): Promise<void> {
     const raw: unknown = await this.loadData();
     const stored = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
-    const drafts: Record<string, Draft> = {};
-    if (stored.drafts && typeof stored.drafts === 'object') for (const [key, value] of Object.entries(stored.drafts)) {
-      if (!value || typeof value !== 'object') continue;
-      const draft = value as Partial<Draft>;
-      if (typeof draft.text === 'string' && typeof draft.updatedAt === 'number') drafts[key] = {
-        text: draft.text, updatedAt: draft.updatedAt,
-        memoKey: typeof draft.memoKey === 'string' ? draft.memoKey : undefined,
-        originalRaw: typeof draft.originalRaw === 'string' ? draft.originalRaw : undefined,
-        sourcePath: typeof draft.sourcePath === 'string' ? draft.sourcePath : undefined,
-        kind: draft.kind === 'formal' ? 'formal' : 'memo',
-        title: typeof draft.title === 'string' ? draft.title : undefined,
-        folder: typeof draft.folder === 'string' ? draft.folder : undefined,
-        autoTag: typeof draft.autoTag === 'string' ? draft.autoTag : undefined,
-      };
-    }
-    for (const draft of Object.values(drafts)) {
-      if (draft.kind === 'formal') draft.kind = 'memo';
-    }
+    const drafts = this.parseDrafts(stored.drafts);
     const chatInputs = Object.fromEntries(Object.entries(stored.chatInputs && typeof stored.chatInputs === 'object' ? stored.chatInputs : {})
       .filter(([key, value]) => /^(new|\d{17})$/.test(key) && typeof value === 'string').map(([key, value]) => [key, (value as string).slice(0, 12000)]));
     this.data = { schema: 1, settings: loadSettings(stored.settings), drafts, chatInputs,
@@ -259,6 +242,30 @@ export default class XiaojiPlugin extends Plugin {
   }
   async clearDraft(key: string): Promise<void> { delete this.data.drafts[key]; await this.persist(); }
   sourcePath(): string { return fileForDate(new Date(), this.prefs); }
+
+  private optionalText = (value: unknown): string | undefined => typeof value === 'string' ? value : undefined;
+
+  /** Drafts live in one JSON blob keyed by input location, so every entry is validated as untrusted data. */
+  private parseDrafts(value: unknown): Record<string, Draft> {
+    const drafts: Record<string, Draft> = {};
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return drafts;
+    for (const [key, entry] of Object.entries(value)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const draft = entry as Record<string, unknown>;
+      if (typeof draft.text !== 'string' || typeof draft.updatedAt !== 'number') continue;
+      drafts[key] = {
+        text: draft.text, updatedAt: draft.updatedAt,
+        memoKey: this.optionalText(draft.memoKey),
+        originalRaw: this.optionalText(draft.originalRaw),
+        sourcePath: this.optionalText(draft.sourcePath),
+        kind: 'memo',
+        title: this.optionalText(draft.title),
+        folder: this.optionalText(draft.folder),
+        autoTag: this.optionalText(draft.autoTag),
+      };
+    }
+    return drafts;
+  }
 
   tags(): string[] {
     if (this.tagCache) return this.tagCache;

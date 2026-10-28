@@ -85,7 +85,7 @@ export interface Draft {
   memoKey?: string;
   originalRaw?: string;
   sourcePath?: string;
-  kind?: 'memo' | 'formal';
+  kind?: 'memo';
   title?: string;
   folder?: string;
 }
