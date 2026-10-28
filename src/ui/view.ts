@@ -973,7 +973,7 @@ export class MemoView extends ItemView {
     if (card) { card.el.scrollIntoView({ block: 'center' });
       window.clearTimeout(this.revealTimer); this.revealed?.classList.remove('is-revealed');
       this.revealed = card.el; void card.el.offsetWidth; card.el.classList.add('is-revealed');
-      this.revealTimer = window.setTimeout(() => card.el.classList.remove('is-revealed'), 1800); }
+      this.revealTimer = window.setTimeout(() => card.el.classList.remove('is-revealed'), 2400); }
   }
 
   async onClose(): Promise<void> {
