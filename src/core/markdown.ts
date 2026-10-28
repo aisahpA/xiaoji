@@ -120,23 +120,26 @@ export function serializeMemo(id: string, body: string, flags: { archived?: bool
   return header + eol + body.replace(/\r\n/g, '\n').split('\n').map(line => '  ' + line).join(eol);
 }
 
-export function findUnchanged(text: string, snapshot: Memo, existing?: Memo[]): Memo {
-  // Fast path: if the snapshot's raw still matches at its recorded offsets, no parse needed.
-  if (snapshot.start >= 0 && snapshot.end > snapshot.start && text.slice(snapshot.start, snapshot.end) === snapshot.raw) {
-    // Still guard against duplicate ids: a regex header count is far cheaper than a full parse.
+export function findUnchanged(text: string, snapshot: Memo): Memo {
+  // Locate the memo by its unique raw text. Cached offsets are not trusted
+  // because neighbouring writes shift them; indexOf is cheap and unambiguous.
+  const start = text.indexOf(snapshot.raw);
+  if (start >= 0) {
+    // Guard against duplicate ids: a regex header count is far cheaper than a full parse.
     const idHeader = new RegExp('^- ' + snapshot.id + '(?:[ \\t]|$)', 'gm');
     if ((text.match(idHeader) ?? []).length > 1) throw new MemoError('conflict');
-    return snapshot;
+    const end = start + snapshot.raw.length;
+    return { ...snapshot, start, end, line: text.slice(0, start).split('\n').length - 1 };
   }
-  const candidates = (existing ?? parseMemos(text, snapshot.path)).filter(memo => memo.id === snapshot.id);
-  // An identical duplicated record is ambiguous too: never guess which one to edit.
+  // The raw text is gone (e.g. external edit or deletion). Re-parse to decide.
+  const candidates = parseMemos(text, snapshot.path).filter(memo => memo.id === snapshot.id);
   if (candidates.length !== 1 || candidates[0]?.raw !== snapshot.raw) throw new MemoError('conflict');
   return candidates[0];
 }
 
-export function replaceMemo(text: string, snapshot: Memo, body: string, existing?: Memo[]): { text: string; memo: Memo } {
+export function replaceMemo(text: string, snapshot: Memo, body: string): { text: string; memo: Memo } {
   if (!body.trim()) throw new MemoError('emptyMemo');
-  const current = findUnchanged(text, snapshot, existing);
+  const current = findUnchanged(text, snapshot);
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   // Preserve unknown header tokens and the original identity.
   const replacement = current.header + eol + body.replace(/\r\n/g, '\n').split('\n').map(line => '  ' + line).join(eol);
@@ -154,8 +157,8 @@ export function replaceMemo(text: string, snapshot: Memo, body: string, existing
   return { text: next, memo };
 }
 
-export function changeFlag(text: string, snapshot: Memo, flag: '×' | '↑', enabled: boolean, existing?: Memo[]): { text: string; memo: Memo } {
-  const current = findUnchanged(text, snapshot, existing);
+export function changeFlag(text: string, snapshot: Memo, flag: '×' | '↑', enabled: boolean): { text: string; memo: Memo } {
+  const current = findUnchanged(text, snapshot);
   const tokens = current.header.slice(2).split(/[ \t]+/).filter(token => token !== flag);
   if (enabled) tokens.splice(1, 0, flag);
   const header = '- ' + tokens.join(' ');
@@ -182,7 +185,9 @@ export function appendMemo(text: string, raw: string, time: number, settings: Se
   const sameGroup = memos.filter(memo => groupKey(memo.createdAt, settings.grouping) === groupKey(time, settings.grouping));
   const last = sameGroup.at(-1);
   if (last) {
-    return text.slice(0, last.end) + eol + eol + raw + text.slice(last.end);
+    // Locate the last group memo by its raw text; cached offsets may be stale.
+    const lastEnd = text.indexOf(last.raw) + last.raw.length;
+    return text.slice(0, lastEnd) + eol + eol + raw + text.slice(lastEnd);
   }
   // Reuse an existing empty heading, without matching headings inside code fences.
   const nodes = parseMarkdown(text).children;
