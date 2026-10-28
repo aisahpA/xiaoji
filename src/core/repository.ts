@@ -151,10 +151,45 @@ export class Repository {
     });
   }
 
-  /** Backfill the scan cache after a local write so the post-write refresh does not re-parse. */
-  private backfill(path: string, memos: Memo[]): void {
+  /**
+   * Backfill the scan cache after a local write so the post-write refresh does
+   * not re-parse. Only `start`/`end`/`line` are recomputed from the written
+   * text by locating each memo's `raw`; all other fields (body, tags, tasks,
+   * ...) are reused from `memos` since the write does not change them.
+   */
+  private backfill(path: string, text: string, memos: Memo[]): void {
     const revision = this.files.revision(path);
-    if (revision !== undefined) this.cache.set(path, { revision, memos });
+    if (revision === undefined) return;
+    // Memos normally appear in the file in array order, so search with a forward
+    // cursor to avoid re-scanning text already covered. Fall back to a full
+    // search when a memo is out of order (e.g. restored into the middle).
+    const positions: number[] = new Array(memos.length).fill(-1);
+    let cursor = 0;
+    for (let i = 0; i < memos.length; i++) {
+      const memo = memos[i]!;
+      let start = text.indexOf(memo.raw, cursor);
+      if (start < 0) start = text.indexOf(memo.raw);
+      if (start >= 0) {
+        positions[i] = start;
+        cursor = start + memo.raw.length;
+      }
+    }
+    // Sort located memos by position so line numbers come from a single forward
+    // newline count instead of slicing + splitting the prefix for every memo.
+    const order: number[] = [];
+    for (let i = 0; i < memos.length; i++) if (positions[i]! >= 0) order.push(i);
+    order.sort((a, b) => positions[a]! - positions[b]!);
+    const refreshed = memos.slice();
+    let line = 0;
+    let prev = 0;
+    for (const i of order) {
+      const start = positions[i]!;
+      for (let j = prev; j < start; j++) if (text.charCodeAt(j) === 10) line++;
+      const memo = memos[i]!;
+      refreshed[i] = { ...memo, start, end: start + memo.raw.length, line };
+      prev = start;
+    }
+    this.cache.set(path, { revision, memos: refreshed });
   }
 
   /** Return the cached memos for a path if the revision still matches; otherwise parse the text. */
@@ -176,6 +211,7 @@ export class Repository {
         const path = fileForDate(date, settings);
         await this.ensureFile(path);
         let result: Memo | undefined;
+        let nextText = '';
         let allMemos: Memo[] = [];
         try {
           await this.files.process(path, current => {
@@ -196,7 +232,8 @@ export class Repository {
               archived: false, pinned: false, blockId: null,
               ...features(finalBody),
             };
-            allMemos = [...existing, result].sort((a, b) => a.start - b.start);
+            allMemos = [...existing, result];
+            nextText = next;
             return next;
           });
         } catch (error) {
@@ -205,7 +242,7 @@ export class Repository {
         }
         if (!result) throw new MemoError('writeFailed');
         this.records.push(result);
-        this.backfill(path, allMemos);
+        this.backfill(path, nextText, allMemos);
         return result;
       }
       throw new MemoError('duplicate');
@@ -215,17 +252,19 @@ export class Repository {
   private mutate(snapshot: Memo, transform: (current: string, existing: Memo[]) => { text: string; memo: Memo }): Promise<Memo> {
     return this.enqueue(async () => {
       let result: Memo | undefined;
+      let nextText = '';
       let allMemos: Memo[] = [];
       await this.files.process(snapshot.path, current => {
         const existing = this.existingFor(snapshot.path, current);
         const { text: next, memo } = transform(current, existing);
         result = memo;
         allMemos = existing.map(memo => memo.key === snapshot.key ? result! : memo);
+        nextText = next;
         return next;
       });
       if (!result) throw new MemoError('writeFailed');
       this.records = this.records.map(memo => memo.key === snapshot.key ? result! : memo);
-      this.backfill(snapshot.path, allMemos);
+      this.backfill(snapshot.path, nextText, allMemos);
       return result;
     });
   }
@@ -276,14 +315,16 @@ export class Repository {
       // Copy the memo into the trash first: cross-file operations are not atomic, so a failed
       // source removal must leave a readable backup behind.
       const entry = await this.trash.append(this.clock().toISOString(), snapshot);
+      let nextText = '';
       try {
         await this.files.process(snapshot.path, current => {
           const target = findUnchanged(current, snapshot, existing);
-          return current.slice(0, target.start) + current.slice(target.end);
+          nextText = current.slice(0, target.start) + current.slice(target.end);
+          return nextText;
         });
       } catch { throw new MemoError('deleteBackupSaved'); }
       this.records = this.records.filter(memo => memo.key !== snapshot.key);
-      this.backfill(snapshot.path, existing.filter(memo => memo.key !== snapshot.key));
+      this.backfill(snapshot.path, nextText, existing.filter(memo => memo.key !== snapshot.key));
       return entry;
     });
   }
@@ -311,6 +352,7 @@ export class Repository {
       const path = fileForDate(entry.memo.createdAt, this.settings());
       await this.ensureFile(path);
       let restored: Memo | undefined;
+      let nextText = '';
       let allMemos: Memo[] = [];
       await this.files.process(path, current => {
         const existing = this.existingFor(path, current);
@@ -328,11 +370,12 @@ export class Repository {
           occurrence,
         };
         allMemos = [...existing, restored].sort((a, b) => a.start - b.start);
+        nextText = next;
         return next;
       });
       if (!restored) throw new MemoError('writeFailed');
       this.records.push(restored);
-      this.backfill(path, allMemos);
+      this.backfill(path, nextText, allMemos);
       let removed = false;
       try { removed = await this.trash.remove(snapshot.key); } catch { throw new MemoError('restoreBackupRemains'); }
       if (!removed) throw new MemoError('restoreBackupRemains');
