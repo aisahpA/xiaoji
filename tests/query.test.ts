@@ -16,7 +16,7 @@ describe('full-index local queries', () => {
     expect(executeMemoQuery(localMemoQuery('今天记了几条小记', now)!, notes).map(m => m.id)).toEqual(['20261021235959999', '20261021000000000']);
   });
   it('counts more than the evidence limit and counts distinct records even with duplicate timestamps', () => {
-    const notes = Array.from({ length: 70 }, (_, i) => ({ ...memo('20261021100000000'), key: 'record-' + i }));
+    const notes = Array.from({ length: 70 }, (_, i) => ({ ...memo('20261021100000000'), id: '202610211000' + String(i).padStart(5, '0') }));
     expect(executeMemoQuery({ action: 'count' }, notes)).toHaveLength(70);
   });
   it.each([

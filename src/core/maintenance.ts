@@ -57,7 +57,7 @@ export function buildMigrationPrompt(settings: Settings, locale: Locale, now = n
 ${format}
 
 规则：
-1. 按原记录边界拆成小记。每条首行必须是顶格的「- YYYYMMDDHHmmssSSS」，17 位本地日期时间戳，不是 Unix 时间戳。已有有效 14 位或 17 位 ID 原样保留；不得重复或随意改变 ID。原时间只有精确到秒且唯一时可补毫秒 000；缺失或冲突的时间须列到单独的“待确认”说明中，不要编造，不要把待确认内容混进可导入文件。
+1. 按原记录边界拆成小记。每条首行必须是顶格的「- YYYYMMDDHHmmssSSS」，17 位本地日期时间戳，不是 Unix 时间戳。已有有效的 17 位 ID 原样保留；不得重复或随意改变 ID。原时间只有精确到秒且唯一时可补毫秒 000；缺失或冲突的时间须列到单独的“待确认”说明中，不要编造，不要把待确认内容混进可导入文件。
 2. 正文放在下一行；每一行在原 Markdown 基础上额外缩进两个半角空格，空行也缩进。保留正文内部的列表、标题、代码、公式、表格、链接、嵌入、附件路径和换行。首行不放正文或标题。
 3. 原生标签使用 #标签 或 #父标签/子标签，标签后与正文用空格分开。归档标记为 ID 后的「 ×」，置顶为「 ↑」。已有 ^原生块ID 或未知首行标记保留。原文未明确归档／置顶时不要添加。
 4. 按当前分卷及文件名格式，使用每条原始创建时间计算目标 Markdown 文件。每个文件仅按当前 grouping 分一种时间区段（日／ISO 周／月）；ISO 周从周一开始。不分组（none）时不生成外层日期标题。日期标题使用 headingLevel 与 headingFormat，不是三级嵌套。小记正文自身标题不变。
@@ -76,7 +76,7 @@ Current storage settings (Moment tokens; [brackets] contain literal text):
 ${format}
 
 Rules:
-- Each memo starts at column 1 with "- YYYYMMDDHHmmssSSS", a unique 17-digit local date-time ID, never a Unix timestamp. Preserve valid existing 14/17-digit IDs. For unique second-precision dates, milliseconds may be 000. List unknown dates or conflicting IDs separately for clarification; never fabricate them or mix unresolved records into importable files.
+- Each memo starts at column 1 with "- YYYYMMDDHHmmssSSS", a unique 17-digit local date-time ID, never a Unix timestamp. Preserve valid existing 17-digit IDs. For unique second-precision dates, milliseconds may be 000. List unknown dates or conflicting IDs separately for clarification; never fabricate them or mix unresolved records into importable files.
 - Put content on subsequent lines. Add exactly two leading spaces to EVERY original Markdown line, including blank lines, preserving its existing indentation. Keep headings, lists, code, tables, math, embeds, links and attachment paths unchanged. No body text on the ID line.
 - Use native #tags and #parent/child tags, separated from following prose by a space. Only explicitly archived records get " ×" after the ID; pinned records get " ↑". Preserve existing ^blockIds and other header tokens.
 - Use each original creation date for the target file period and filename. Use a single day/ISO-week/month heading layer per the settings; ISO weeks start Monday. With grouping=none, omit outer date headings. Never change headings inside the memo body.

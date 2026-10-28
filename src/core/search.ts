@@ -108,5 +108,5 @@ export function selectMemos(memos: readonly Memo[], view: NavItem, query: string
   const search = compileSearch(query);
   return memos.filter(memo => (all ? scope.includeArchived || !memo.archived : inView(memo, scope, settings, now)) &&
     search(memo) && (options.tags ?? []).every(tag => matchesTag(memo.tags, tag))).sort((a, b) =>
-    Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt || a.key.localeCompare(b.key));
+    Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt || a.id.localeCompare(b.id));
 }

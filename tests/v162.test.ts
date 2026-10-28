@@ -68,7 +68,7 @@ it('releases distant Markdown and restores expanded content and working task con
 it('creates lightweight slots instead of rendering ten thousand preceding Markdown bodies for a deep link', async () => {
   const { plugin } = await makeFixture();
   const memo = plugin.repo.records[0]!;
-  plugin.repo.records = Array.from({ length: 10000 }, (_, i) => ({ ...memo, key: 'large-' + i, createdAt: memo.createdAt - i }));
+  plugin.repo.records = Array.from({ length: 10000 }, (_, i) => ({ ...memo, id: '202610211000' + String(i).padStart(5, '0'), createdAt: memo.createdAt - i }));
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function(this: HTMLElement) { return this.classList.contains('xj-scroller') ? 640 : 0; });
   view = new MemoView({ app: plugin.app } as unknown as WorkspaceLeaf, plugin); document.body.append(view.containerEl); await view.onOpen();
   expect(view.contentEl.querySelectorAll('.xj-card')).toHaveLength(0);

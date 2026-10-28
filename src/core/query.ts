@@ -64,7 +64,7 @@ export function executeMemoQuery(query: MemoQuery, records: readonly Memo[], inc
     (!q.tasks || (q.tasks === 'incomplete' ? memo.tasks.incomplete > 0 : memo.tasks.total > 0)) &&
     (!q.tags?.length || q.tags.every(tag => matchesTag(memo.tags, tag))) &&
     (!text || memo.body.toLocaleLowerCase().normalize('NFKC').includes(text)))
-    .sort((a, b) => b.createdAt - a.createdAt || a.key.localeCompare(b.key));
+    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
 }
 
 /** Conservative offline path: unknown topic words fall through to model planning. */

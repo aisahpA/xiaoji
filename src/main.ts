@@ -232,7 +232,7 @@ export default class XiaojiPlugin extends Plugin {
     window.clearTimeout(this.draftTimer); this.draftTimer = null; return this.persist();
   }
   setDraft(key: string, text: string, memo?: Memo, metadata: Partial<Draft> = {}): void {
-    if (text) this.data.drafts[key] = { ...metadata, text, updatedAt: Date.now(), memoKey: memo?.key, originalRaw: memo?.raw };
+    if (text) this.data.drafts[key] = { ...metadata, text, updatedAt: Date.now(), memoId: memo?.id, originalRaw: memo?.raw };
     else delete this.data.drafts[key];
     this.scheduleDraftSave();
   }
@@ -253,9 +253,12 @@ export default class XiaojiPlugin extends Plugin {
       if (!entry || typeof entry !== 'object') continue;
       const draft = entry as Record<string, unknown>;
       if (typeof draft.text !== 'string' || typeof draft.updatedAt !== 'number') continue;
+      const memoId = typeof draft.memoId === 'string' && /^\d{17}$/.test(draft.memoId) ? draft.memoId : undefined;
+      // Drafts from before ids were the identity cannot be restored, so drop them outright.
+      if (!memoId && (typeof draft.memoKey === 'string' || key.endsWith('-edit'))) continue;
       drafts[key] = {
         text: draft.text, updatedAt: draft.updatedAt,
-        memoKey: this.optionalText(draft.memoKey),
+        memoId,
         originalRaw: this.optionalText(draft.originalRaw),
         sourcePath: this.optionalText(draft.sourcePath),
         kind: 'memo',
@@ -571,7 +574,7 @@ export default class XiaojiPlugin extends Plugin {
     const text = await this.app.vault.read(file);
     const candidates = parseMemos(text, file.path).filter(memo => memo.id === snapshot.id);
     // Prefer the freshly parsed offset; the cached snapshot offset may have moved.
-    const memo = candidates.length === 1 ? candidates[0] : candidates[snapshot.occurrence];
+    const memo = candidates[0];
     const start = memo?.start ?? text.indexOf(snapshot.raw);
     const line = start >= 0 ? text.slice(0, start).split('\n').length - 1 : 0;
     const leaf = this.app.workspace.getLeaf('tab');
@@ -580,8 +583,7 @@ export default class XiaojiPlugin extends Plugin {
   }
 
   memoLink(memo: Memo): string {
-    const params = new URLSearchParams({ vault: this.app.vault.getName(), id: memo.id, path: memo.path, occurrence: String(memo.occurrence) });
-    return 'obsidian://xiaoji?' + params.toString();
+    return 'obsidian://xiaoji?' + new URLSearchParams({ vault: this.app.vault.getName(), id: memo.id }).toString();
   }
   sourceLink(memo: Memo, sourcePath = ''): string {
     const file = this.app.vault.getAbstractFileByPath(memo.path);
@@ -630,12 +632,7 @@ export default class XiaojiPlugin extends Plugin {
 
   private async handleLink(params: Record<string, string>): Promise<void> {
     if (params.vault && params.vault !== this.app.vault.getName()) return;
-    const findMemo = (): Memo | undefined => {
-      const matches = this.repo.records.filter(memo => memo.id === params.id);
-      const inPath = matches.filter(memo => memo.path === params.path);
-      const occurrence = Number(params.occurrence ?? '0');
-      return inPath.find(item => item.occurrence === occurrence) ?? (matches.length === 1 ? matches[0] : undefined);
-    };
+    const findMemo = (): Memo | undefined => this.repo.records.find(memo => memo.id === params.id);
     let memo = findMemo();
     if (!memo) { await this.refresh(); memo = findMemo(); }
     if (!memo) throw new MemoError('conflict');
@@ -654,7 +651,7 @@ export default class XiaojiPlugin extends Plugin {
     const nodes: Text[] = []; let current: Node | null;
     while ((current = walker.nextNode())) if (!(current.parentElement?.closest('a,code,pre,script,style,textarea,mjx-container,.math'))) nodes.push(current as Text);
     for (const node of nodes) {
-      const text = node.data, matches = [...text.matchAll(/(?<![\p{L}\p{N}_])@(\d{17}|\d{14})(?!\d)/gu)];
+      const text = node.data, matches = [...text.matchAll(/(?<![\p{L}\p{N}_])@(\d{17})(?!\d)/gu)];
       if (!matches.length) continue;
       const fragment = root.ownerDocument.win.createFragment(); let cursor = 0;
       for (const match of matches) {

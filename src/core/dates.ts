@@ -8,8 +8,8 @@ import { normalizeFolder, safeFileName } from './settings';
 export const ID_FORMAT = 'YYYYMMDDHHmmssSSS';
 
 export function dateFromId(id: string): number | null {
-  if (!/^(?:\d{14}|\d{17})$/.test(id)) return null;
-  const parsed = moment(id, id.length === 17 ? ID_FORMAT : 'YYYYMMDDHHmmss', true);
+  if (!/^\d{17}$/.test(id)) return null;
+  const parsed = moment(id, ID_FORMAT, true);
   return parsed.isValid() ? parsed.valueOf() : null;
 }
 

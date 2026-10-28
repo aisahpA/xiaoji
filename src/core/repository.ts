@@ -193,12 +193,11 @@ export class Repository {
             const raw = serializeMemo(id, finalBody, {}, eol);
             const next = appendMemo(current, raw, date.valueOf(), settings, headingForDate(date, settings), existing);
             const start = next.indexOf(raw);
-            const occurrence = existing.filter(memo => memo.id === id).length;
             result = {
-              id, key: path + '::' + id + '::' + occurrence, path,
+              id, path,
               body: finalBody, raw, header: '- ' + id,
               start,
-              occurrence, createdAt: date.valueOf(),
+              createdAt: date.valueOf(),
               archived: false, pinned: false, blockId: null,
               ...features(finalBody),
             };
@@ -226,11 +225,11 @@ export class Repository {
         const existing = this.existingFor(snapshot.path, current);
         const { text: next, memo } = transform(current);
         result = memo;
-        allMemos = existing.map(memo => memo.key === snapshot.key ? result! : memo);
+        allMemos = existing.map(memo => memo.id === snapshot.id ? result! : memo);
         return next;
       });
       if (!result) throw new MemoError('writeFailed');
-      this.records = this.records.map(memo => memo.key === snapshot.key ? result! : memo);
+      this.records = this.records.map(memo => memo.id === snapshot.id ? result! : memo);
       this.backfill(snapshot.path, allMemos);
       return result;
     });
@@ -288,8 +287,8 @@ export class Repository {
           return current.slice(0, target.start) + current.slice(target.start + target.raw.length);
         });
       } catch { throw new MemoError('deleteBackupSaved'); }
-      this.records = this.records.filter(memo => memo.key !== snapshot.key);
-      this.backfill(snapshot.path, existing.filter(memo => memo.key !== snapshot.key));
+      this.records = this.records.filter(memo => memo.id !== snapshot.id);
+      this.backfill(snapshot.path, existing.filter(memo => memo.id !== snapshot.id));
       return entry;
     });
   }
@@ -323,13 +322,10 @@ export class Repository {
         if (existing.some(memo => memo.id === snapshot.memo.id)) throw new MemoError('restoreDuplicate');
         const next = appendMemo(current, entry.memo.raw, snapshot.memo.createdAt, this.settings(), headingForDate(snapshot.memo.createdAt, this.settings()), existing);
         const start = next.indexOf(entry.memo.raw);
-        const occurrence = existing.filter(memo => memo.id === snapshot.memo.id).length;
         restored = {
           ...snapshot.memo,
           path,
-          key: path + '::' + snapshot.memo.id + '::' + occurrence,
           start,
-          occurrence,
         };
         allMemos = [...existing, restored].sort((a, b) => next.indexOf(a.raw) - next.indexOf(b.raw));
         return next;

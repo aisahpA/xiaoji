@@ -45,7 +45,7 @@ function validate(value: unknown): Conversation {
       !Array.isArray(turn.sources)) throw new MemoError('chatInvalid');
     if (turn.query && ((turn.query.action !== undefined && !['count', 'list', 'answer'].includes(turn.query.action)) || !Number.isInteger(turn.query.total) || turn.query.total < 0 || !Number.isInteger(turn.query.shown) || turn.query.shown < 0 || turn.query.shown > turn.query.total || typeof turn.query.scope !== 'string')) throw new MemoError('chatInvalid');
     ids.add(turn.id);
-    for (const source of turn.sources) if (!source?.memo || !/^\d{14}(?:\d{3})?$/.test(source.memo.id) ||
+    for (const source of turn.sources) if (!source?.memo || !/^\d{17}$/.test(source.memo.id) ||
       typeof source.memo.body !== 'string' || typeof source.memo.path !== 'string' ||
       typeof source.content !== 'string' || !Number.isInteger(source.number) || source.number < 1) throw new MemoError('chatInvalid');
   }

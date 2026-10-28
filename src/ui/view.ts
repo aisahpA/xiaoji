@@ -181,7 +181,7 @@ export class MemoView extends ItemView {
     this.bindMarquee();
     this.visibility = new IntersectionObserver(entries => {
       for (const entry of entries) {
-        const key = (entry.target as HTMLElement).dataset.memoKey;
+        const key = (entry.target as HTMLElement).dataset.memoId;
         const slot = key ? this.slots.get(key) : undefined;
         if (!key || !slot || slot.el !== entry.target || this.closed) continue;
         if (entry.isIntersecting) {
@@ -210,7 +210,7 @@ export class MemoView extends ItemView {
           const folded = card.body.scrollHeight > height + 6;
           card.body.classList.toggle('can-fold', folded);
           card.fold.hidden = !folded;
-          this.measuredCards.add(card.memo.key);
+          this.measuredCards.add(card.memo.id);
         }
         if (this.plugin.prefs.layout !== 'waterfall') continue;
         const gap = densityValues(this.plugin.prefs).gap;
@@ -263,26 +263,20 @@ export class MemoView extends ItemView {
         .sort((a, b) => b[1].updatedAt - a[1].updatedAt)[0];
       if (previous) {
         const [key, draft] = previous;
-        if (draft.memoKey) {
-          const source = p.repo.records.find(memo => memo.key === draft.memoKey);
-          if (source) {
-            this.editing = { ...source, raw: draft.originalRaw ?? source.raw };
-            p.setDraft(this.draftKey + '-edit', draft.text, this.editing, { sourcePath: source.path });
-          } else p.setDraft(this.draftKey, draft.text, undefined, { sourcePath: draft.sourcePath });
-          void p.clearDraft(key).catch(error => p.report(error));
-        } else this.draftKey = key;
+        const source = draft.memoId ? p.repo.records.find(memo => memo.id === draft.memoId) : undefined;
+        if (source) {
+          this.editing = { ...source, raw: draft.originalRaw ?? source.raw };
+          p.setDraft(this.draftKey + '-edit', draft.text, this.editing, { sourcePath: source.path });
+        }
+        void p.clearDraft(key).catch(error => p.report(error));
       }
     }
     if (!p.loading) this.recoveryChecked = true;
     const pending = p.data.drafts[this.draftKey + '-edit'];
-    if (!this.editing && pending?.memoKey) {
-      const source = p.repo.records.find(memo => memo.key === pending.memoKey);
+    if (!this.editing && pending) {
+      const source = pending.memoId ? p.repo.records.find(memo => memo.id === pending.memoId) : undefined;
       if (source) this.editing = { ...source, raw: pending.originalRaw ?? source.raw };
-      else if (!p.loading) {
-        const existing = p.data.drafts[this.draftKey]?.text ?? '';
-        p.setDraft(this.draftKey, [existing, pending.text].filter(Boolean).join('\n\n'));
-        void p.clearDraft(this.draftKey + '-edit').catch(error => p.report(error));
-      }
+      else if (!p.loading) void p.clearDraft(this.draftKey + '-edit').catch(error => p.report(error));
     }
     const key = this.editing ? this.draftKey + '-edit' : this.draftKey;
     const draft = p.data.drafts[key];
@@ -305,7 +299,7 @@ export class MemoView extends ItemView {
   private syncComposer(): void {
     if (this.saving) return;
     if (!this.recoveryChecked && !this.plugin.loading) { this.buildComposer(); return; }
-    if (!this.editing && this.plugin.data.drafts[this.draftKey + '-edit']?.memoKey && !this.plugin.loading) {
+    if (!this.editing && this.plugin.data.drafts[this.draftKey + '-edit']?.memoId && !this.plugin.loading) {
       this.buildComposer(); return;
     }
     if (this.composerLocale !== this.plugin.locale || this.composer?.shortcut !== this.plugin.prefs.submitKey) { this.buildComposer(); return; }
@@ -364,7 +358,7 @@ export class MemoView extends ItemView {
   }
   async editMemo(memo: Memo): Promise<void> {
     if (this.saving) return;
-    if (this.editing && this.editing.key !== memo.key) {
+    if (this.editing && this.editing.id !== memo.id) {
       new Notice(this.plugin.t('finishEditing')); this.focusComposer(); return;
     }
     if (!this.editing) {
@@ -396,7 +390,7 @@ export class MemoView extends ItemView {
       p.refreshSoon();
       if (editing) {
         this.scroller.scrollTop = this.editReturnScroll;
-        const card = this.cards.get(memo.key); card?.el.classList.add('is-revealed');
+        const card = this.cards.get(memo.id); card?.el.classList.add('is-revealed');
       } else this.requestTopScroll();
       new Notice(p.t('savedMemo'));
     } catch (error) { p.report(error); }
@@ -603,7 +597,7 @@ export class MemoView extends ItemView {
     button(actions, p.t('more'), event => {
       const menu = new Menu();
       menu.addItem(item => item.setTitle(p.t('selectAll')).setIcon('check-check').onClick(() => {
-        this.selected = new Set(this.filtered.map(memo => memo.key)); this.render(true);
+        this.selected = new Set(this.filtered.map(memo => memo.id)); this.render(true);
       }));
       menu.addItem(item => item.setTitle(p.t('copy')).setIcon('copy').onClick(() => this.run(() => p.clipboard(this.selectedMemos().map(memo => memo.body).join('\n\n---\n\n'), this.root.ownerDocument))));
       menu.showAtMouseEvent(event);
@@ -653,7 +647,7 @@ export class MemoView extends ItemView {
     if (!terms.length) return;
     const hit = card.body.querySelector<HTMLElement>('mark.xj-search-hit');
     const hidden = !hit || hit.offsetTop - card.body.offsetTop >= densityValues(this.plugin.prefs).foldHeight;
-    if (hidden && !this.expanded.has(card.memo.key)) {
+    if (hidden && !this.expanded.has(card.memo.id)) {
       const normalized = card.memo.body.normalize('NFKC').toLocaleLowerCase();
       const normalizedIndex = terms.map(term => normalized.indexOf(term.normalize('NFKC').toLocaleLowerCase())).find(value => value >= 0);
       if (normalizedIndex !== undefined) {
@@ -666,7 +660,7 @@ export class MemoView extends ItemView {
         const excerpt = element(context, 'span', '', (index > 45 ? '…' : '') + card.memo.body.slice(Math.max(0, index - 45), index + 100) + (index + 100 < card.memo.body.length ? '…' : ''));
         highlightSearch(excerpt, this.query);
         button(context, this.plugin.locale === 'zh' ? '展开小记' : 'Expand memo', () => {
-          this.expanded.add(card.memo.key); card.body.classList.remove('is-folded'); context.hidden = true; this.syncCard(card);
+          this.expanded.add(card.memo.id); card.body.classList.remove('is-folded'); context.hidden = true; this.syncCard(card);
           if (hit) hit.scrollIntoView({ block: 'nearest' });
         }, undefined, 'xj-text-button');
       }
@@ -674,21 +668,21 @@ export class MemoView extends ItemView {
   }
 
   private syncCard(card: Card): void {
-    card.checkbox.hidden = !this.selectionMode; card.checkbox.checked = this.selected.has(card.memo.key);
-    card.el.classList.toggle('is-selected', this.selected.has(card.memo.key));
-    card.body.classList.toggle('is-folded', !this.expanded.has(card.memo.key));
-    card.fold.textContent = this.plugin.t(this.expanded.has(card.memo.key) ? 'collapse' : 'expand');
+    card.checkbox.hidden = !this.selectionMode; card.checkbox.checked = this.selected.has(card.memo.id);
+    card.el.classList.toggle('is-selected', this.selected.has(card.memo.id));
+    card.body.classList.toggle('is-folded', !this.expanded.has(card.memo.id));
+    card.fold.textContent = this.plugin.t(this.expanded.has(card.memo.id) ? 'collapse' : 'expand');
   }
 
   private measureCards(): void {
     const height = densityValues(this.plugin.prefs).foldHeight;
     if (height !== this.lastFoldHeight) { this.measuredCards.clear(); this.lastFoldHeight = height; }
     for (const card of this.cards.values()) {
-      if (this.measuredCards.has(card.memo.key)) continue;
+      if (this.measuredCards.has(card.memo.id)) continue;
       const folded = card.body.scrollHeight > height + 6;
       card.body.classList.toggle('can-fold', folded);
       card.fold.hidden = !folded;
-      this.measuredCards.add(card.memo.key);
+      this.measuredCards.add(card.memo.id);
     }
   }
 
@@ -706,7 +700,7 @@ export class MemoView extends ItemView {
     this.feedSignature = sig;
     const top = this.scroller.getBoundingClientRect().top;
     const anchors = [...this.cards.values()].filter(card => card.el.isConnected && card.el.getBoundingClientRect().bottom >= top)
-      .slice(0, 3).map(card => ({ key: card.memo.key, offset: card.el.getBoundingClientRect().top - top }));
+      .slice(0, 3).map(card => ({ key: card.memo.id, offset: card.el.getBoundingClientRect().top - top }));
     empty(this.status);
     if (p.readError) {
       element(this.status, 'p', 'xj-hint', p.t('readFailed'));
@@ -724,12 +718,12 @@ export class MemoView extends ItemView {
       element(this.status, 'p', 'xj-hint', p.t(error instanceof MemoError && error.code === 'unsupportedQuery' ? 'unsupportedQuery' : 'invalidQuery'));
     }
     for (const feedback of this.completedFeedback.values()) {
-      if (feedback.scope === this.stateKey() && !this.filtered.some(memo => memo.key === feedback.memo.key)) this.filtered.push(feedback.memo);
+      if (feedback.scope === this.stateKey() && !this.filtered.some(memo => memo.id === feedback.memo.id)) this.filtered.push(feedback.memo);
     }
-    if (this.completedFeedback.size) this.filtered.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt || a.key.localeCompare(b.key));
+    if (this.completedFeedback.size) this.filtered.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     if (p.repo.duplicates.size) element(this.status, 'p', 'xj-hint', p.t('duplicateWarning', { count: p.repo.duplicates.size }));
     const visible = this.filtered.slice(0, this.limit);
-    const keep = new Set(visible.map(memo => memo.key));
+    const keep = new Set(visible.map(memo => memo.id));
     for (const [key, card] of this.cards) if (!keep.has(key)) { this.disposeCard(card); this.cards.delete(key); }
     for (const [key, slot] of this.slots) if (!keep.has(key)) {
       this.visibility?.unobserve(slot.el); slot.el.remove(); this.slots.delete(key);
@@ -737,14 +731,14 @@ export class MemoView extends ItemView {
     let pinCursor = this.pinnedFeed.firstElementChild, regularCursor = this.regularFeed.firstElementChild;
     this.pinnedFeed.hidden = !visible.some(memo => memo.pinned);
     for (const memo of visible) {
-      let card = this.cards.get(memo.key);
-      if (card && card.memo.raw !== memo.raw) { this.disposeCard(card); this.cards.delete(memo.key); card = undefined; }
-      let slot = this.slots.get(memo.key);
+      let card = this.cards.get(memo.id);
+      if (card && card.memo.raw !== memo.raw) { this.disposeCard(card); this.cards.delete(memo.id); card = undefined; }
+      let slot = this.slots.get(memo.id);
       if (!slot) {
         const el = this.root.ownerDocument.win.createFragment().createDiv(); el.className = 'xj-card-slot';
-        el.dataset.memoKey = memo.key; slot = { el, memo }; this.slots.set(memo.key, slot);
+        el.dataset.memoId = memo.id; slot = { el, memo }; this.slots.set(memo.id, slot);
         if (!this.scroller.clientHeight) {
-          card = this.createCard(memo); this.cards.set(memo.key, card); el.appendChild(card.el);
+          card = this.createCard(memo); this.cards.set(memo.id, card); el.appendChild(card.el);
         } else {
           const height = densityValues(p.prefs).foldHeight + 80;
           el.style.setProperty('--xj-slot-height', height + 'px'); el.style.gridRowEnd = 'span ' + Math.ceil((height + densityValues(p.prefs).gap) / 4);
@@ -752,7 +746,7 @@ export class MemoView extends ItemView {
         this.visibility?.observe(el);
       } else if (slot.memo.raw !== memo.raw) {
         slot.memo = memo; slot.el.setCssProps({ '--xj-slot-height': 'auto' });
-        card = this.createCard(memo); this.cards.set(memo.key, card); slot.el.appendChild(card.el);
+        card = this.createCard(memo); this.cards.set(memo.id, card); slot.el.appendChild(card.el);
       }
       const zone = memo.pinned ? this.pinnedFeed : this.regularFeed;
       const cursor = memo.pinned ? pinCursor : regularCursor;
@@ -761,11 +755,11 @@ export class MemoView extends ItemView {
       else regularCursor = cursor.nextElementSibling;
       if (!card) continue;
       card.checkbox.hidden = !this.selectionMode;
-      card.checkbox.checked = this.selected.has(memo.key);
-      card.el.classList.toggle('is-selected', this.selected.has(memo.key));
-      card.body.classList.toggle('is-folded', !this.expanded.has(memo.key));
+      card.checkbox.checked = this.selected.has(memo.id);
+      card.el.classList.toggle('is-selected', this.selected.has(memo.id));
+      card.body.classList.toggle('is-folded', !this.expanded.has(memo.id));
       this.decorateCard(card);
-      card.fold.textContent = p.t(this.expanded.has(memo.key) ? 'collapse' : 'expand');
+      card.fold.textContent = p.t(this.expanded.has(memo.id) ? 'collapse' : 'expand');
       const time = card.el.querySelector('time');
       if (time) time.textContent = p.date(memo);
       card.checkbox.setAttribute('aria-label', p.t('select') + ' ' + p.date(memo));
@@ -800,7 +794,7 @@ export class MemoView extends ItemView {
     const checkbox = element(heading, 'input', 'xj-selection-box');
     checkbox.type = 'checkbox'; checkbox.setAttribute('aria-label', p.t('select') + ' ' + p.date(memo));
     checkbox.addEventListener('change', () => {
-      if (checkbox.checked) this.selected.add(memo.key); else this.selected.delete(memo.key);
+      if (checkbox.checked) this.selected.add(memo.id); else this.selected.delete(memo.id);
       this.render(true);
     });
     const time = element(heading, 'time', 'xj-card-time', p.date(memo));
@@ -810,8 +804,8 @@ export class MemoView extends ItemView {
     button(heading, p.t('more'), event => this.memoMenu(memo, event), 'ellipsis');
     const body = element(node, 'div', 'xj-card-body xj-markdown markdown-rendered is-folded');
     const fold = button(node, p.t('expand'), () => {
-      const open = !this.expanded.has(memo.key);
-      if (open) this.expanded.add(memo.key); else this.expanded.delete(memo.key);
+      const open = !this.expanded.has(memo.id);
+      if (open) this.expanded.add(memo.id); else this.expanded.delete(memo.id);
       body.classList.toggle('is-folded', !open);
       fold.textContent = p.t(open ? 'collapse' : 'expand');
     }, undefined, 'xj-fold-button');
@@ -833,7 +827,7 @@ export class MemoView extends ItemView {
       const target = event.target as Element;
       if (target.closest('.xj-selection-box,.xj-card-heading button')) return;
       event.preventDefault(); event.stopImmediatePropagation();
-      if (this.selected.has(memo.key)) this.selected.delete(memo.key); else this.selected.add(memo.key);
+      if (this.selected.has(memo.id)) this.selected.delete(memo.id); else this.selected.add(memo.id);
       this.render(true);
     }, true);
     body.addEventListener('click', event => {
@@ -869,9 +863,9 @@ export class MemoView extends ItemView {
               const updated = await p.repo.toggleTask(memo, index);
               const kind = this.current().kind;
               if (kind === 'tasks' && updated.tasks.incomplete === 0 && !p.prefs.tasksIncludeCompleted) {
-                const previous = this.completedFeedback.get(updated.key); if (previous) window.clearTimeout(previous.timer);
-                const timer = window.setTimeout(() => { this.completedFeedback.delete(updated.key); if (!this.closed) this.renderFeed(); }, 1000);
-                this.completedFeedback.set(updated.key, { memo: updated, scope: this.stateKey(), timer });
+                const previous = this.completedFeedback.get(updated.id); if (previous) window.clearTimeout(previous.timer);
+                const timer = window.setTimeout(() => { this.completedFeedback.delete(updated.id); if (!this.closed) this.renderFeed(); }, 1000);
+                this.completedFeedback.set(updated.id, { memo: updated, scope: this.stateKey(), timer });
               }
             } finally { await p.refresh(); }
           });
@@ -910,7 +904,7 @@ export class MemoView extends ItemView {
     menu.addSeparator();
     menu.addItem(item => item.setTitle(p.t(memo.pinned ? 'unpin' : 'pin')).setIcon('pin').onClick(() => this.run(async () => { await p.repo.setPinned(memo, !memo.pinned); this.restoreScroll = 0; await p.refresh(); this.scroller.scrollTop = 0; if (!memo.pinned) new Notice(p.t('pinDone')); })));
     menu.addItem(item => item.setTitle(p.t(memo.archived ? 'unarchive' : 'doArchive')).setIcon('archive').onClick(() => this.run(async () => { await p.repo.setArchived(memo, !memo.archived); await p.refresh(); })));
-    menu.addItem(item => item.setTitle(p.t('select')).setIcon('check-square').onClick(() => { this.selectionMode = true; this.selected.add(memo.key); this.render(true); }));
+    menu.addItem(item => item.setTitle(p.t('select')).setIcon('check-square').onClick(() => { this.selectionMode = true; this.selected.add(memo.id); this.render(true); }));
     menu.addSeparator();
     menu.addItem(item => item.setTitle(p.t('delete')).setIcon('trash-2').onClick(() => this.run(async () => {
       const entry = await p.repo.delete(memo); await p.refresh(); this.offerUndo([entry]);
@@ -918,7 +912,7 @@ export class MemoView extends ItemView {
     menu.showAtMouseEvent(event);
   }
 
-  private selectedMemos(): Memo[] { return this.filtered.filter(memo => this.selected.has(memo.key)); }
+  private selectedMemos(): Memo[] { return this.filtered.filter(memo => this.selected.has(memo.id)); }
   private isArchiveView(): boolean { return this.current().kind === 'archive'; }
   private tagSelection(): void {
     const p = this.plugin;
@@ -940,7 +934,7 @@ export class MemoView extends ItemView {
         if (action === 'archive') await p.repo.setArchived(memo, !this.isArchiveView());
         else if (action === 'delete') deletedEntries.push(await p.repo.delete(memo));
         else await p.repo.addTag(memo, tag ?? '');
-        this.selected.delete(memo.key); done++;
+        this.selected.delete(memo.id); done++;
       } catch (error) { failed++; p.report(error); }
     }
     if (!failed) this.selectionMode = false;
@@ -951,7 +945,7 @@ export class MemoView extends ItemView {
 
   private run(action: () => Promise<unknown> | void): void { void Promise.resolve().then(action).catch(error => this.plugin.report(error)); }
   private disposeCard(card: Card): void {
-    card.alive = false; this.cardObserver?.unobserve(card.el); this.measuredCards.delete(card.memo.key); card.component.unload(); card.el.remove();
+    card.alive = false; this.cardObserver?.unobserve(card.el); this.measuredCards.delete(card.memo.id); card.component.unload(); card.el.remove();
   }
 
   async revealMemo(memo: Memo): Promise<void> {
@@ -959,12 +953,12 @@ export class MemoView extends ItemView {
     this.tagPath = ''; this.currentId = memo.archived ? 'archive' : 'all'; this.query = ''; this.filterTags = []; this.allScope = false; this.includeArchived = false;
     this.selectionMode = false; this.selected.clear(); this.restoreScroll = 0;
     const all = selectMemos(this.plugin.repo.records, this.current(), '', this.plugin.prefs);
-    this.limit = Math.max(40, all.findIndex(item => item.key === memo.key) + 1);
-    this.expanded.add(memo.key); this.render(true);
-    let card = this.cards.get(memo.key);
-    const slot = this.slots.get(memo.key);
+    this.limit = Math.max(40, all.findIndex(item => item.id === memo.id) + 1);
+    this.expanded.add(memo.id); this.render(true);
+    let card = this.cards.get(memo.id);
+    const slot = this.slots.get(memo.id);
     if (!card && slot) {
-      card = this.createCard(memo); this.cards.set(memo.key, card); slot.el.setCssProps({ '--xj-slot-height': 'auto' });
+      card = this.createCard(memo); this.cards.set(memo.id, card); slot.el.setCssProps({ '--xj-slot-height': 'auto' });
       slot.el.appendChild(card.el); this.cardObserver?.observe(card.el); this.syncCard(card);
     }
     if (card) { card.el.scrollIntoView({ block: 'center' });

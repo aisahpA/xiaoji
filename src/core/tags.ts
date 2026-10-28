@@ -12,7 +12,7 @@ export function tagTree(memos: readonly Memo[]): TagNode[] {
       for (let depth = 1; depth <= parts.length; depth++) {
         const path = parts.slice(0, depth).join('/');
         const entries = counts.get(path) ?? new Set<string>();
-        entries.add(memo.key); counts.set(path, entries);
+        entries.add(memo.id); counts.set(path, entries);
       }
     }
   }

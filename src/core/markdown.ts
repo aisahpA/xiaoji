@@ -68,7 +68,7 @@ function featuresFromItem(item: Nodes): Pick<Memo, 'tags' | 'tasks'> {
   let headerConsumed = false;
   const stripHeader = (text: string): string => {
     if (headerConsumed) return text;
-    const idMatch = /^(\d{17}|\d{14})/.exec(text);
+    const idMatch = /^(\d{17})/.exec(text);
     if (!idMatch) return text;
     headerConsumed = true;
     // Remove the id and any flag tokens (×, ↑, ^blockId) that immediately follow it.
@@ -79,7 +79,6 @@ function featuresFromItem(item: Nodes): Pick<Memo, 'tags' | 'tasks'> {
 
 export function parseMemos(text: string, path: string): Memo[] {
   const result: Memo[] = [];
-  const occurrences = new Map<string, number>();
   for (const block of parseMarkdown(text).children) {
     if (block.type !== 'list' || block.ordered) continue;
     for (const item of block.children) {
@@ -90,18 +89,16 @@ export function parseMemos(text: string, path: string): Memo[] {
       const raw = text.slice(start, end);
       const newline = raw.indexOf('\n');
       const header = (newline < 0 ? raw : raw.slice(0, newline)).replace(/\r$/, '');
-      const match = /^- (\d{17}|\d{14})(?:[ \t]+(.*))?$/.exec(header);
+      const match = /^- (\d{17})(?:[ \t]+(.*))?$/.exec(header);
       if (!match?.[1]) continue;
       const createdAt = dateFromId(match[1]);
       if (createdAt === null) continue;
       const tail = match[2] ?? '';
       const body = newline < 0 ? '' : raw.slice(newline + 1).replace(/\r\n/g, '\n')
         .split('\n').map(line => line.startsWith('  ') ? line.slice(2) : line.startsWith('\t') ? line.slice(1) : line).join('\n');
-      const occurrence = occurrences.get(match[1]) ?? 0;
-      occurrences.set(match[1], occurrence + 1);
       result.push({
-        id: match[1], key: path + '::' + match[1] + '::' + occurrence, path,
-        body, raw, header, start, occurrence,
+        id: match[1], path,
+        body, raw, header, start,
         createdAt, archived: /(?:^|\s)×(?:\s|$)/.test(tail),
         pinned: /(?:^|\s)↑(?:\s|$)/.test(tail),
         blockId: /(?:^|\s)\^([A-Za-z0-9-]+)(?:\s|$)/.exec(tail)?.[1] ?? null,

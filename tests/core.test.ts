@@ -66,10 +66,10 @@ describe('Markdown records', () => {
       '\n>   引用\n\n- 普通列表\n  - ' + id + '\n    子列表\n\n' + serializeMemo(id, '真的');
     expect(parseMemos(text, 'test.md').map(entry => entry.body)).toEqual(['真的']);
   });
-  it('keeps duplicate identities visible with distinct keys', () => {
+  it('keeps duplicate identities visible but refuses to edit them', () => {
     const parsed = parseMemos(serializeMemo(id, '一') + '\n\n' + serializeMemo(id, '二'), 'test.md');
     expect(parsed).toHaveLength(2);
-    expect(parsed[0]!.key).not.toBe(parsed[1]!.key);
+    expect(parsed.map(entry => entry.id)).toEqual([id, id]);
     expect(() => replaceMemo(parsed.map(entry => entry.raw).join('\n\n'), parsed[0]!, '三')).toThrow('conflict');
   });
   it('preserves all unrelated source, CRLF, and unknown header metadata when archiving', () => {
@@ -90,8 +90,8 @@ describe('Markdown records', () => {
     const snapshot = parseMemos(text, 'test.md')[0]!;
     expect(() => replaceMemo(text.replace('旧内容', '另一台设备'), snapshot, '我的编辑')).toThrow('conflict');
   });
-  it('recognizes 14 digits and rejects impossible dates', () => {
-    expect(parseMemos('- 20261021110727\n  秒级\n\n- 20261321110727123\n  坏日期', 'test.md')).toHaveLength(1);
+  it('rejects 14-digit ids and impossible dates', () => {
+    expect(parseMemos('- 20261021110727\n  秒级\n\n- 20261321110727123\n  坏日期', 'test.md')).toHaveLength(0);
   });
   it('reads actual tags and tasks, excluding code, links, wiki headings and HTML', () => {
     const body = '#教学/反思 #阅读\n\n' + ticks + 'md\n#假标签\n- [ ] 假任务\n' + ticks +

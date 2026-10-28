@@ -5,7 +5,6 @@ export type ViewKind = 'all' | 'archive' | 'pinned' | 'week' | 'tasks' | 'tag' |
 
 export interface Memo {
   id: string;
-  key: string;
   path: string;
   body: string;
   raw: string;
@@ -18,7 +17,6 @@ export interface Memo {
    * (see `findUnchanged`) before slicing or jumping.
    */
   start: number;
-  occurrence: number;
   createdAt: number;
   archived: boolean;
   pinned: boolean;
@@ -82,7 +80,7 @@ export interface Draft {
   autoTag?: string;
   text: string;
   updatedAt: number;
-  memoKey?: string;
+  memoId?: string;
   originalRaw?: string;
   sourcePath?: string;
   kind?: 'memo';

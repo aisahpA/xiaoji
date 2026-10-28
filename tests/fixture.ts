@@ -70,7 +70,7 @@ export async function makeFixture(overrides: Partial<Settings> = {}): Promise<{ 
     notify: () => { for (const subscriber of subscribers) subscriber(); },
     updateSettings: async (update: Partial<Settings> | ((current: Settings) => Partial<Settings>)) => { data.settings = loadSettings({ ...data.settings, ...(typeof update === 'function' ? update(data.settings) : update) }); plugin.notify(); },
     setDraft: (key: string, text: string, memo?: any, metadata = {}) => {
-      if (text) data.drafts[key] = { ...metadata, text, updatedAt: Date.now(), memoKey: memo?.key, originalRaw: memo?.raw };
+      if (text) data.drafts[key] = { ...metadata, text, updatedAt: Date.now(), memoId: memo?.id, originalRaw: memo?.raw };
       else delete data.drafts[key];
     },
     clearDraft: async (key: string) => { delete data.drafts[key]; },

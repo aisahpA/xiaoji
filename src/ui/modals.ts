@@ -62,10 +62,10 @@ export class ReviewModal extends Modal {
     empty(this.contentEl); this.contentEl.classList.add('xj-modal');
     element(this.contentEl, 'h2', '', p.t('review'));
     const all = p.repo.records.filter(memo => !memo.archived);
-    const pool = all.length > 1 ? all.filter(memo => memo.key !== this.previous) : all;
+    const pool = all.length > 1 ? all.filter(memo => memo.id !== this.previous) : all;
     const memo = pool[Math.floor(Math.random() * pool.length)];
     if (!memo) { element(this.contentEl, 'p', 'xj-hint', p.t('noResults')); return; }
-    this.previous = memo.key;
+    this.previous = memo.id;
     element(this.contentEl, 'small', 'xj-muted', p.date(memo));
     const body = element(this.contentEl, 'div', 'xj-markdown markdown-rendered');
     await MarkdownRenderer.render(this.app, memo.body, body, memo.path, this.component);

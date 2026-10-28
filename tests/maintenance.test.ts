@@ -60,14 +60,14 @@ describe('safe Markdown regrouping', () => {
       ticks + 'md', '- 20261022120000000', '  只是代码示例', ticks, '',
       '$$E=mc^2$$', '', '![[图片.png]] [[原文#章节]]', '', '> 引用', '> 第二行',
     ].join('\n');
-    const raw = serializeMemo('20261021110727', body, { archived: true, pinned: true, blockId: 'keep-me' }, '\r\n')
+    const raw = serializeMemo('20261021110727000', body, { archived: true, pinned: true, blockId: 'keep-me' }, '\r\n')
       .replace(' ^keep-me', ' ^keep-me custom-token');
     const source = '### 261021\r\n\r\n' + raw + '\r\n';
     const result = reformatText(source, path, settings({ grouping: 'month', headingLevel: 1 }));
     expect(result.reason).toBeUndefined();
     expect(result.text).toContain('# 2026-10\r\n');
     expect(parseMemos(result.text, path)).toHaveLength(1);
-    expect(parseMemos(result.text, path)[0]).toMatchObject({ raw, body, id: '20261021110727', archived: true, pinned: true, blockId: 'keep-me' });
+    expect(parseMemos(result.text, path)[0]).toMatchObject({ raw, body, id: '20261021110727000', archived: true, pinned: true, blockId: 'keep-me' });
   });
 
   it.each([
@@ -87,7 +87,7 @@ describe('safe Markdown regrouping', () => {
     expect(reformatText(source, path, settings())).toMatchObject({ text: source, reason: 'content' });
   });
 
-  it('refuses duplicate identities rather than choosing one occurrence', () => {
+  it('refuses duplicate identities rather than choosing between them', () => {
     const source = records()[0] + '\n\n' + serializeMemo(ids[0], '同 ID 的另一条');
     expect(reformatText(source, path, settings())).toMatchObject({ text: source, reason: 'duplicate' });
   });
